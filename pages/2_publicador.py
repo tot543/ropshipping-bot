@@ -225,7 +225,11 @@ def buscar_o_crear_campana(tienda_id: str, ad_rate_pct: float) -> str | None:
                     return camp.get("campaignId")
         
         # 2. Si no existe, crearla
-        hoy = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00.000Z")
+        # eBay requiere que la fecha de inicio no esté en el pasado en su reloj UTC.
+        # En vez de floor a 00:00:00, mandaremos la hora UTC exacta actual + 10 segundos
+        from datetime import timedelta
+        ahora_iso = (datetime.now(timezone.utc) + timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        
         payload_campana = {
             "campaignName": NOMBRE_CAMPANA,
             "marketplaceId": "EBAY_US",
@@ -233,7 +237,7 @@ def buscar_o_crear_campana(tienda_id: str, ad_rate_pct: float) -> str | None:
                 "fundingModel": "COST_PER_SALE",
                 "bidPercentage": str(round(ad_rate_pct, 1))
             },
-            "startDate": hoy
+            "startDate": ahora_iso
         }
         
         resp_crear = hacer_peticion_con_reintento("POST", f"{EBAY_MARKETING_BASE_URL}/ad_campaign", tienda_id, payload_campana)
