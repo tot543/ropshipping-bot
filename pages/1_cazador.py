@@ -267,6 +267,16 @@ def main() -> None:
     st.info(f"🔌 Conectado a **eBay Browse API** (OAuth) | Tienda: **{nombre}**")
     st.divider()
 
+    # ── Inicialización de variables de sesión para persistencia -----
+    if "datos_ebay_crudos" not in st.session_state:
+        st.session_state["datos_ebay_crudos"] = None
+    if "datos_amazon_crudos" not in st.session_state:
+        st.session_state["datos_amazon_crudos"] = None
+    if "item_id_cazado" not in st.session_state:
+        st.session_state["item_id_cazado"] = None
+    if "amazon_url_cazada" not in st.session_state:
+        st.session_state["amazon_url_cazada"] = None
+
     # ── Inputs del usuario ───────────────────────────────
     col_ebay, col_amazon = st.columns(2)
     with col_ebay:
@@ -306,11 +316,15 @@ def main() -> None:
             st.error("❌ Ingresa la URL del producto de Amazon.")
             st.stop()
 
+        # Limpiamos sesión anterior al intentar uno nuevo
+        st.session_state["datos_ebay_crudos"] = None
+        st.session_state["datos_amazon_crudos"] = None
+
         # ── 1. Extraer datos de eBay ─────────────────────
-        producto_ebay = None
+        producto_ebay_temp = None
         with st.spinner("🔍 Consultando eBay Browse API..."):
             try:
-                producto_ebay = extraer_datos_ebay(item_id.strip(), tienda_id)
+                producto_ebay_temp = extraer_datos_ebay(item_id.strip(), tienda_id)
             except requests.exceptions.HTTPError as e:
                 cod = e.response.status_code
                 if cod == 404:
@@ -320,16 +334,14 @@ def main() -> None:
             except Exception as e:
                 st.error(f"❌ Error al consultar eBay: {str(e)}")
 
-        if not producto_ebay:
+        if not producto_ebay_temp:
             st.stop()
 
-        st.success(f"✅ eBay: **{producto_ebay['titulo']}** — ${producto_ebay['precio_ebay']:.2f}")
-
         # ── 2. Extraer datos de Amazon ───────────────────
-        datos_amazon = None
+        datos_amazon_temp = None
         with st.spinner("🛒 Scrapeando Amazon con ScraperAPI..."):
             try:
-                datos_amazon = extraer_datos_amazon(amazon_url.strip())
+                datos_amazon_temp = extraer_datos_amazon(amazon_url.strip())
             except ValueError as e:
                 st.error(str(e))
             except requests.exceptions.Timeout:
@@ -339,10 +351,25 @@ def main() -> None:
             except Exception as e:
                 st.error(f"❌ Error al scrape Amazon: {str(e)}")
 
-        if not datos_amazon:
+        if not datos_amazon_temp:
             st.stop()
 
+        # Guardamos en sesión todo el lote extraído
+        st.session_state["datos_ebay_crudos"] = producto_ebay_temp
+        st.session_state["datos_amazon_crudos"] = datos_amazon_temp
+        st.session_state["item_id_cazado"] = item_id.strip()
+        st.session_state["amazon_url_cazada"] = amazon_url.strip()
+
+
+    # ── Renderizado Persistente (No depende del botón) ──────────
+    if st.session_state.get("datos_ebay_crudos") and st.session_state.get("datos_amazon_crudos"):
+        producto_ebay = st.session_state["datos_ebay_crudos"]
+        datos_amazon = st.session_state["datos_amazon_crudos"]
         costo_amazon = datos_amazon["precio"]
+        item_id_actual = st.session_state["item_id_cazado"]
+        amazon_url_actual = st.session_state["amazon_url_cazada"]
+
+        st.success(f"✅ eBay: **{producto_ebay['titulo']}** — ${producto_ebay['precio_ebay']:.2f}")
         st.success(f"✅ Amazon: Precio encontrado — **${costo_amazon:.2f}**")
 
         # ── 3. Calcular Precio Base/Automático ─────────────────────
@@ -381,7 +408,7 @@ def main() -> None:
         # ── Panel de datos Amazon ────────────────────────
         st.subheader("🛒 Fuente: Producto Amazon (ScraperAPI)")
         am1, am2 = st.columns([3, 1])
-        am1.markdown(f"🔗 [Ver en Amazon]({amazon_url.strip()})")
+        am1.markdown(f"🔗 [Ver en Amazon]({amazon_url_actual})")
         am2.metric("Costo de Sourcing", f"${costo_amazon:.2f}")
 
         with st.expander("🖼️ Imágenes extraídas de Amazon", expanded=False):
@@ -428,7 +455,7 @@ def main() -> None:
             )
             st.session_state["producto_aprobado"] = {
                 # Datos eBay
-                "item_id":      item_id.strip(),
+                "item_id":      item_id_actual,
                 "titulo":       producto_ebay["titulo"],
                 "precio_ebay":  producto_ebay["precio_ebay"],
                 "precio_sugerido": calc["precio_sugerido"],
