@@ -186,31 +186,37 @@ def extraer_datos_amazon(amazon_url: str) -> dict:
 
 def calcular_rentabilidad(
     precio_final_venta: float, 
-    costo_amazon: float,
+    costo_amazon_base: float,
+    tax_proveedor_pct: float = 8.0,
     tax_comprador_pct: float = 8.0,
     mi_ad_rate_pct: float = 12.0,
 ) -> dict:
     """
     Fórmula desglosada basada en el Precio Final de Venta dictado por el usuario.
-    - Fees de eBay Base: 15% sobre el total que paga el comprador (Precio + Taxes).
+    - Costo Real Compra: Lo que pagas en Amazon (Precio Lista + Sales Tax Estimado).
+    - Fees de eBay Base: 15% sobre el total que paga el comprador (Precio Venta + Taxes eBay).
     - Tarifa Fija: $0.30.
     """
     tarifa_fija = 0.30
     
-    # 1. Desglose de Gastos
-    precio_con_tax     = precio_final_venta * (1 + (tax_comprador_pct / 100))
-    fees_ebay_base     = precio_con_tax * 0.15
-    costo_promoted     = precio_final_venta * (mi_ad_rate_pct / 100)
-    descuento_total    = fees_ebay_base + costo_promoted + tarifa_fija
+    # 1. Desglose de Costos de Adquisición
+    costo_real_compra = costo_amazon_base * (1 + (tax_proveedor_pct / 100))
+    
+    # 2. Desglose de Gastos de Venta (eBay)
+    precio_con_tax_ebay = precio_final_venta * (1 + (tax_comprador_pct / 100))
+    fees_ebay_base      = precio_con_tax_ebay * 0.15
+    costo_promoted      = precio_final_venta * (mi_ad_rate_pct / 100)
+    descuento_total     = fees_ebay_base + costo_promoted + tarifa_fija
 
-    # 2. Ganancia y ROI
-    ganancia_neta = precio_final_venta - costo_amazon - descuento_total
-    # Margen/ROI calculado sobre el costo real de inversión (Costo Proveedor)
-    margen_pct    = (ganancia_neta / costo_amazon * 100) if costo_amazon > 0 else 0
+    # 3. Ganancia y ROI
+    ganancia_neta = precio_final_venta - costo_real_compra - descuento_total
+    # Margen/ROI calculado sobre el costo real de inversión (Costo Proveedor + Tax)
+    margen_pct    = (ganancia_neta / costo_real_compra * 100) if costo_real_compra > 0 else 0
 
     return {
         "precio_sugerido":   precio_final_venta, # Mantenemos key para el publicador
-        "costo_amazon":      costo_amazon,
+        "costo_amazon":      round(costo_real_compra, 2), # Ahora incluye tax
+        "tax_amazon_dolares": round(costo_real_compra - costo_amazon_base, 2),
         "fees_ebay_base":    round(fees_ebay_base, 2),
         "costo_promoted":    round(costo_promoted, 2),
         "tarifa_fija":       tarifa_fija,
@@ -293,11 +299,14 @@ def main() -> None:
         )
 
     st.subheader("⚙️ Opciones de Calculadora")
-    col_c1, col_c2 = st.columns(2)
+    col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1:
-        tax_comprador_pct = st.number_input("💸 Taxes promedio del comprador (%)", value=8.0, step=0.5, help="Promedio de Sales Tax en USA (eBay calcula sus fees sobre el total + taxes).")
-        mi_ad_rate_pct    = st.number_input("📈 Mi campaña de Promoted Listings (%)", value=12.0, step=0.5, help="Tarifa de la campaña Auto_Dropshipping_Campaign en el Publicador.")
+        tax_proveedor_pct = st.number_input("💸 Tax pagado a Amazon (%)", value=8.0, step=0.5, help="Estimación del Sales Tax que tú pagas al comprar en Amazon.")
     with col_c2:
+        tax_comprador_pct = st.number_input("💸 Tax del cliente eBay (%)", value=8.0, step=0.5, help="Estimación del Sales Tax que eBay cobra al cliente (afecta fees).")
+    with col_c3:
+        mi_ad_rate_pct    = st.number_input("📈 Promoted Listings (%)", value=12.0, step=0.5, help="Tarifa pagada en anuncios de eBay para esta publicación.")
+
         st.markdown("<br>", unsafe_allow_html=True) # Espaciador
         competidor_sin_ads = st.checkbox(
             "⚠️ El competidor NO usa Ads (Inflar precio de venta)", 
@@ -391,7 +400,8 @@ def main() -> None:
         # ── 4. Calcular Rentabilidad ──────────────────────────────
         calc = calcular_rentabilidad(
             precio_final_venta=precio_final_venta, 
-            costo_amazon=costo_amazon,
+            costo_amazon_base=costo_amazon,
+            tax_proveedor_pct=tax_proveedor_pct,
             tax_comprador_pct=tax_comprador_pct,
             mi_ad_rate_pct=mi_ad_rate_pct
         )
@@ -409,7 +419,12 @@ def main() -> None:
         st.subheader("🛒 Fuente: Producto Amazon (ScraperAPI)")
         am1, am2 = st.columns([3, 1])
         am1.markdown(f"🔗 [Ver en Amazon]({amazon_url_actual})")
-        am2.metric("Costo de Sourcing", f"${costo_amazon:.2f}")
+        am2.metric(
+            "Costo Inicial (Sin Tax)", 
+            f"${costo_amazon:.2f}",
+            delta=f"Costo con Tax: ${calc['costo_amazon']:.2f}",
+            delta_color="off"
+        )
 
         with st.expander("🖼️ Imágenes extraídas de Amazon", expanded=False):
             imgs = datos_amazon.get("imagenes", [])
@@ -460,8 +475,8 @@ def main() -> None:
                 "precio_ebay":  producto_ebay["precio_ebay"],
                 "precio_sugerido": calc["precio_sugerido"],
                 "category_id":  producto_ebay["category_id"],
-                # Datos Amazon
-                "costo_amazon":       costo_amazon,
+                # Datos Amazon (Costo Real con Tax)
+                "costo_amazon":       calc["costo_amazon"],
                 "imagenes_amazon":    datos_amazon.get("imagenes", []),
                 "bullets_amazon":     datos_amazon.get("bullets", []),
                 "descripcion_amazon": datos_amazon.get("descripcion", ""),
