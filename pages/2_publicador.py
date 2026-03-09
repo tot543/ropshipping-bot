@@ -383,13 +383,57 @@ def publicar_en_ebay(
         offer_id = req_offer.json().get("offerId", "")
         st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
 
-        # ── Paso C: PublishOffer ──
+        # ── Paso C: PublishOffer (Con Auto-Healing) ──
         url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
         st.markdown(f"**Paso C** — `POST {url_publish}`")
 
-        req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {})
-        req_publish.raise_for_status()
-        listing_id = req_publish.json().get("listingId", "N/A")
+        max_reintentos_publish = 3
+        intento_publish = 0
+        listing_id = None
+
+        while intento_publish <= max_reintentos_publish and listing_id is None:
+            req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {})
+
+            if req_publish.status_code in (200, 201):
+                listing_id = req_publish.json().get("listingId", "N/A")
+                break
+
+            # Auto-Healing: Si PublishOffer falla con 25002, parchear el Inventory Item
+            if req_publish.status_code == 400:
+                try:
+                    errores = req_publish.json().get("errors", [])
+                    errores_25002 = [err for err in errores if err.get("errorId") == 25002]
+                    if errores_25002 and intento_publish < max_reintentos_publish:
+                        aspectos_inyectados = []
+                        for err in errores_25002:
+                            mensaje = err.get("message", "")
+                            match = re.search(r'The item specific(.*?)(?:is missing|was not found)', mensaje, re.IGNORECASE)
+                            if match:
+                                aspecto_faltante = match.group(1).strip()
+                                aspectos_dict[aspecto_faltante] = ["Does not apply"]
+                                aspectos_inyectados.append(aspecto_faltante)
+
+                        if aspectos_inyectados:
+                            intento_publish += 1
+                            st.warning(f"🔄 Auto-Healing (Paso C): eBay exige: **{', '.join(aspectos_inyectados)}**. Parcheando Inventory Item... (Intento {intento_publish}/{max_reintentos_publish})")
+
+                            # Re-construir y re-enviar el Inventory Item con los aspectos nuevos
+                            payload_item_fix = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
+                            req_fix = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item_fix)
+                            if req_fix.status_code in (200, 201, 204):
+                                st.info(f"✅ Inventory Item parcheado con: {', '.join(aspectos_inyectados)}")
+                            else:
+                                st.error(f"❌ No se pudo parchear el Inventory Item: {req_fix.text[:200]}")
+                                req_publish.raise_for_status()
+                            continue
+                except Exception as ex:
+                    st.warning(f"Error parseando auto-healing en Paso C: {str(ex)}")
+
+            # Si llegamos aquí sin haber hecho continue, es un error no-recuperable
+            req_publish.raise_for_status()
+
+        if listing_id is None:
+            return False, "❌ No se pudo publicar después de múltiples intentos de auto-healing."
 
         mensaje_exito = (
             f"✅ **Publicado exitosamente**\n\n"
