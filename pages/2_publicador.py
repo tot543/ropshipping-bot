@@ -248,7 +248,11 @@ def buscar_o_crear_campana(tienda_id: str, ad_rate_pct: float) -> str | None:
                     campaign_id = location.rstrip("/").split("/")[-1]
             return campaign_id if campaign_id else None
         else:
-            st.warning(f"⚠️ No se pudo crear la campaña de Promoted Listings ({resp_crear.status_code}).")
+            try:
+                err_detalle = resp_crear.json()
+            except Exception:
+                err_detalle = resp_crear.text
+            st.warning(f"⚠️ No se pudo crear la campaña de Promoted Listings ({resp_crear.status_code}): {err_detalle}")
             return None
             
     except Exception as e:
