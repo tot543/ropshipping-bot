@@ -345,18 +345,25 @@ def publicar_en_ebay(
                 if req_item.status_code == 400:
                     try:
                         errores = req_item.json().get("errors", [])
-                        error_25002 = next((err for err in errores if err.get("errorId") == 25002), None)
-                        if error_25002:
-                            mensaje = error_25002.get("message", "")
-                            match = re.search(r'The item specific (.*?) is missing', mensaje, re.IGNORECASE)
-                            if match:
-                                aspecto_faltante = match.group(1).strip()
-                                st.info(f"🛠️ eBay exige el aspecto: '{aspecto_faltante}'. Inyectándolo automáticamente...")
-                                aspectos_dict[aspecto_faltante] = ["Does not apply"]
+                        errores_25002 = [err for err in errores if err.get("errorId") == 25002]
+                        if errores_25002:
+                            aspectos_inyectados = []
+                            for err in errores_25002:
+                                mensaje = err.get("message", "")
+                                # Extraer lo que está entre "The item specific" y "is missing"
+                                # Ejemplo: "The item specific Department is missing. Add Department..."
+                                match = re.search(r'The item specific(.*?)(?:is missing|was not found)', mensaje, re.IGNORECASE)
+                                if match:
+                                    aspecto_faltante = match.group(1).strip()
+                                    aspectos_dict[aspecto_faltante] = ["Does not apply"]
+                                    aspectos_inyectados.append(aspecto_faltante)
+                            
+                            if aspectos_inyectados:
+                                st.info(f"🛠️ eBay exige: {', '.join(aspectos_inyectados)}. Inyectando automáticamente...")
                                 intento += 1
                                 continue
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        st.warning(f"Error parseando auto-healing: {str(ex)}")
                 raise e
 
         # ── Paso B: CreateOffer ──
