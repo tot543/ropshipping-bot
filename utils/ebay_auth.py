@@ -30,7 +30,8 @@ def get_auth_url() -> str:
         "https://api.ebay.com/oauth/api_scope "
         "https://api.ebay.com/oauth/api_scope/sell.inventory "
         "https://api.ebay.com/oauth/api_scope/sell.fulfillment "
-        "https://api.ebay.com/oauth/api_scope/sell.account"
+        "https://api.ebay.com/oauth/api_scope/sell.account "
+        "https://api.ebay.com/oauth/api_scope/sell.marketing"
     )
     
     url = "https://auth.ebay.com/oauth2/authorize"
@@ -79,7 +80,8 @@ def refresh_access_token(tienda_id: str):
         "https://api.ebay.com/oauth/api_scope "
         "https://api.ebay.com/oauth/api_scope/sell.inventory "
         "https://api.ebay.com/oauth/api_scope/sell.fulfillment "
-        "https://api.ebay.com/oauth/api_scope/sell.account"
+        "https://api.ebay.com/oauth/api_scope/sell.account "
+        "https://api.ebay.com/oauth/api_scope/sell.marketing"
     )
     
     data = {
