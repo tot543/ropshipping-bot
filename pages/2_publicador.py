@@ -30,15 +30,16 @@ EBAY_MARKETING_BASE_URL  = "https://api.ebay.com/sell/marketing/v1"
 # HELPERS HTTP
 # ─────────────────────────────────────────────────────────
 
-def construir_headers_ebay(token: str) -> dict:
+def construir_headers_ebay(token: str, marketplace_id: str = "EBAY_US") -> dict:
     """
-    Retorna las cabeceras mínimas para la API de eBay.
-    Se ha simplificado para diagnosticar el error 404.
+    Retorna las cabeceras requeridas para la API de eBay.
     """
     return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type":  "application/json",
-        "Accept":        "application/json",
+        "Authorization":           f"Bearer {token}",
+        "Content-Type":            "application/json",
+        "Content-Language":        "en-US",
+        "Accept":                  "application/json",
+        "X-EBAY-C-MARKETPLACE-ID": marketplace_id
     }
 
 
@@ -50,10 +51,13 @@ def hacer_peticion_con_reintento(
 ) -> requests.Response:
     """
     Wrapper HTTP con auto-renovación OAuth en errores 401.
-    Simplificado para coincidir con el script de diagnóstico.
     """
+    # Recuperar marketplace_id para las cabeceras
+    config_tienda = st.session_state.get("config_tienda", {})
+    marketplace_id = config_tienda.get("site_id", "EBAY_US")
+
     token = get_valid_token(tienda_id)
-    headers = construir_headers_ebay(token)
+    headers = construir_headers_ebay(token, marketplace_id)
 
     kwargs = {"url": url, "headers": headers, "timeout": 20}
     if payload is not None:
@@ -65,7 +69,7 @@ def hacer_peticion_con_reintento(
     if respuesta.status_code == 401:
         st.warning("🔄 Token expirado. Auto-renovando...")
         nuevo_token = refresh_access_token(tienda_id)
-        kwargs["headers"] = construir_headers_ebay(nuevo_token)
+        kwargs["headers"] = construir_headers_ebay(nuevo_token, marketplace_id)
         respuesta = requests.request(metodo, **kwargs)
 
     # 2. Log de depuración para errores críticos
