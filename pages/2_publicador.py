@@ -31,11 +31,14 @@ EBAY_MARKETING_BASE_URL  = "https://api.ebay.com/sell/marketing/v1"
 # ─────────────────────────────────────────────────────────
 
 def construir_headers_ebay(token: str) -> dict:
+    """
+    Retorna las cabeceras mínimas para la API de eBay.
+    Se ha simplificado para diagnosticar el error 404.
+    """
     return {
-        "Authorization":    f"Bearer {token}",
-        "Content-Type":     "application/json",
-        "Content-Language": "en-US",
-        "Accept":           "application/json",
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
     }
 
 
@@ -47,6 +50,7 @@ def hacer_peticion_con_reintento(
 ) -> requests.Response:
     """
     Wrapper HTTP con auto-renovación OAuth en errores 401.
+    Simplificado para coincidir con el script de diagnóstico.
     """
     token = get_valid_token(tienda_id)
     headers = construir_headers_ebay(token)
@@ -57,11 +61,17 @@ def hacer_peticion_con_reintento(
 
     respuesta = requests.request(metodo, **kwargs)
 
+    # 1. Manejo de renovación de token (401)
     if respuesta.status_code == 401:
         st.warning("🔄 Token expirado. Auto-renovando...")
         nuevo_token = refresh_access_token(tienda_id)
         kwargs["headers"] = construir_headers_ebay(nuevo_token)
         respuesta = requests.request(metodo, **kwargs)
+
+    # 2. Log de depuración para errores críticos
+    if respuesta.status_code >= 400:
+        print(f"DEBUG EBAY API | {metodo} {url} | Status: {respuesta.status_code}")
+        print(f"DEBUG EBAY API | Response: {respuesta.text[:500]}")
 
     return respuesta
 
@@ -129,9 +139,9 @@ def obtener_ubicaciones_ebay(tienda_id: str) -> dict:
 
 def crear_ubicacion_default(tienda_id: str) -> bool:
     """
-    Crea una ubicación por defecto (USA Warehouse) para cuentas nuevas.
+    Crea una ubicación por defecto (USA Warehouse) con máxima transparencia.
     """
-    location_key = "DEFAULT_WAREHOUSE_US"
+    location_key = "ALMACEN_USA_1"
     url = f"{EBAY_INVENTORY_BASE_URL}/location/{location_key}"
     
     payload = {
@@ -144,19 +154,26 @@ def crear_ubicacion_default(tienda_id: str) -> bool:
                 "country": "US"
             }
         },
-        "locationWebUrl": "https://www.ebay.com",
         "name": "Almacén Principal USA",
         "merchantLocationStatus": "ENABLED",
         "locationTypes": ["WAREHOUSE"]
     }
     
-    resp = hacer_peticion_con_reintento("POST", f"{EBAY_INVENTORY_BASE_URL}/location/{location_key}/create", tienda_id, payload)
+    st.info(f"📡 Intentando crear ubicación en: `{url}`")
+    
+    resp = hacer_peticion_con_reintento("POST", url, tienda_id, payload)
     
     if resp.status_code in (200, 201, 204):
+        st.success(f"✅ ¡Éxito! Ubicación '{location_key}' creada.")
         st.cache_data.clear() # Limpiar cache para que aparezca la nueva ubicación
         return True
     else:
-        st.error(f"Error creando ubicación: {resp.text}")
+        st.error(f"❌ Error {resp.status_code} al crear ubicación.")
+        with st.expander("🔍 Ver Detalles Técnicos para Soporte"):
+            st.write(f"**URL intentada:** `{url}`")
+            st.write(f"**Headers enviados:** `{resp.request.headers}`")
+            st.write(f"**Cuerpo de respuesta:**")
+            st.code(resp.text, language="json")
         return False
 
 
