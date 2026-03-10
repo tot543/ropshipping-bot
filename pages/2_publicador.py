@@ -408,9 +408,8 @@ def publicar_en_ebay(
                             aspectos_inyectados = []
                             for err in errores_25002:
                                 mensaje = err.get("message", "")
-                                # Extraer lo que está entre "The item specific" y "is missing"
-                                # Ejemplo: "The item specific Department is missing. Add Department..."
-                                match = re.search(r'The item specific(.*?)(?:is missing|was not found)', mensaje, re.IGNORECASE)
+                                # Regex más robusta: captura lo que está entre "specific" y "is missing", "was not found" o "is required"
+                                match = re.search(r'specific\s+["\']?(.*?)["\']?\s+(?:is missing|was not found|is required)', mensaje, re.IGNORECASE)
                                 if match:
                                     aspecto_faltante = match.group(1).strip()
                                     aspectos_dict[aspecto_faltante] = ["Does not apply"]
@@ -420,6 +419,8 @@ def publicar_en_ebay(
                                 st.info(f"🛠️ eBay exige: {', '.join(aspectos_inyectados)}. Inyectando automáticamente...")
                                 intento += 1
                                 continue
+                            else:
+                                st.warning(f"⚠️ eBay pide aspectos pero no pude identificar cuáles: {mensaje}")
                     except Exception as ex:
                         st.warning(f"Error parseando auto-healing: {str(ex)}")
                 raise e
@@ -482,12 +483,21 @@ def publicar_en_ebay(
                                 st.info(f"✅ Inventory Item parcheado con: {', '.join(aspectos_inyectados)}")
                             else:
                                 st.error(f"❌ No se pudo parchear el Inventory Item: {req_fix.text[:200]}")
+                                with st.expander("🔍 Detalles del fallo al parchear aspectos"):
+                                    st.code(req_fix.text, language="json")
                                 req_publish.raise_for_status()
                             continue
+                        else:
+                            st.error("❌ Faltan aspectos pero no se pudieron auto-detectar.")
                 except Exception as ex:
                     st.warning(f"Error parseando auto-healing en Paso C: {str(ex)}")
-
-            # Si llegamos aquí sin haber hecho continue, es un error no-recuperable
+            
+            # Si falló y no hubo auto-healing exitoso
+            st.error(f"❌ Error {req_publish.status_code} al publicar oferta.")
+            with st.expander("🔍 Ver Detalles Técnicos (Paso C)"):
+                st.write(f"**URL:** `{url_publish}`")
+                st.write(f"**Respuesta de eBay:**")
+                st.code(req_publish.text, language="json")
             req_publish.raise_for_status()
 
         if listing_id is None:
