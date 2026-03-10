@@ -178,6 +178,51 @@ def renderizar_dashboard(tiendas: dict) -> None:
 
 
 def main() -> None:
+    # === TEMPORARY OAUTH EXCHANGE SNIPPET ===
+    if "code" in st.query_params:
+        import urllib.parse
+        import requests
+        import base64
+        
+        auth_code = st.query_params["code"]
+        
+        app_id = st.secrets["ebay"]["app_id"]
+        cert_id = st.secrets["ebay"]["cert_id"]
+        runame = st.secrets["ebay"]["runame"]
+        
+        auth_str = f"{app_id}:{cert_id}"
+        b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+        
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {b64_auth}"
+        }
+        
+        payload = {
+            "grant_type": "authorization_code",
+            "code": auth_code,
+            "redirect_uri": runame
+        }
+        
+        st.warning("🔄 Intercambiando código por tokens (esto ocurre en el servidor de Streamlit para evadir el bloqueo 503 local)...")
+        try:
+            resp = requests.post("https://api.ebay.com/identity/v1/oauth2/token", headers=headers, data=payload)
+            if resp.status_code == 200:
+                st.success("✅ ¡ÉXITO! Copia estos tokens y pégalos en secrets.toml (sección tienda_chica_1):")
+                st.json(resp.json())
+            else:
+                st.error(f"❌ Error HTTP {resp.status_code}")
+                try:
+                    st.json(resp.json())
+                except:
+                    st.write(resp.text)
+        except Exception as e:
+            st.error(f"Excepción en el servidor: {str(e)}")
+            
+        st.info("⚠️ Una vez copiados, borra todo lo que sigue al '?' en la URL (incluido el 'code=') para volver al Dashboard normal.")
+        st.stop() # Detenemos el renderizado del dashboard para no sobrecargar
+    # ========================================
+
     tiendas = cargar_tiendas()
     inicializar_session_state(tiendas)
     renderizar_sidebar(tiendas)
