@@ -150,7 +150,7 @@ def crear_ubicacion_default(tienda_id: str) -> bool:
         "locationTypes": ["WAREHOUSE"]
     }
     
-    resp = hacer_peticion_con_reintento("POST", f"{EBAY_INVENTORY_BASE_URL}/location/{location_key}/create", tienda_id, payload)
+    resp = hacer_peticion_con_reintento("POST", url, tienda_id, payload)
     
     if resp.status_code in (200, 201, 204):
         st.cache_data.clear() # Limpiar cache para que aparezca la nueva ubicación
