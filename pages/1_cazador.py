@@ -99,18 +99,28 @@ def extraer_datos_ebay(item_id: str, tienda_id: str) -> dict:
 # EXTRACCIÓN AMAZON — ScraperAPI + BeautifulSoup (PRODUCCIÓN)
 # ─────────────────────────────────────────────────────────
 
-def extraer_datos_amazon(amazon_url: str) -> dict:
+def extraer_datos_amazon(amazon_url: str, tienda_id: str = None) -> dict:
     """
-    Usa ScraperAPI con autoparse='true' para obtener datos estructurados JSON
-    en lugar de HTML. Extrae precio, imágenes, bullets y top reviews directamente.
-    Lanza Exception si falla o no encuentra el precio.
+    Usa ScraperAPI con autoparse='true' para obtener datos estructurados JSON.
+    Busca la API Key en:
+    1. st.secrets["tiendas"][tienda_id]["scraper_api_key"] (si existe)
+    2. st.secrets["amazon"]["scraper_api_key"] (fallback global)
     """
-    api_key = st.secrets["amazon"]["scraper_api_key"]
+    api_key = None
+    
+    # 1. Intentar buscar en la tienda específica
+    if tienda_id:
+        tienda_cfg = st.secrets.get("tiendas", {}).get(tienda_id, {})
+        api_key = tienda_cfg.get("scraper_api_key")
 
-    if api_key in ("TU_SCRAPERAPI_KEY_AQUI", "", "AMAZON_ACCESS_KEY_HERE"):
+    # 2. Intentar buscar en el bloque global [amazon] si no se encontró
+    if not api_key:
+        api_key = st.secrets.get("amazon", {}).get("scraper_api_key")
+
+    if not api_key or api_key in ("TU_SCRAPERAPI_KEY_AQUI", "", "AMAZON_ACCESS_KEY_HERE"):
         raise ValueError(
-            "❌ Configura tu 'scraper_api_key' real en .streamlit/secrets.toml bajo [amazon].\n"
-            "Regístrate gratis en https://www.scraperapi.com (5000 solicitudes/mes gratis)."
+            "❌ No se encontró 'scraper_api_key'. \n"
+            "Asegúrate de tenerlo en [amazon] o dentro de tu tienda en secrets.toml."
         )
 
     scraper_url = "http://api.scraperapi.com"
@@ -350,7 +360,7 @@ def main() -> None:
         datos_amazon_temp = None
         with st.spinner("🛒 Scrapeando Amazon con ScraperAPI..."):
             try:
-                datos_amazon_temp = extraer_datos_amazon(amazon_url.strip())
+                datos_amazon_temp = extraer_datos_amazon(amazon_url.strip(), tienda_id)
             except ValueError as e:
                 st.error(str(e))
             except requests.exceptions.Timeout:
