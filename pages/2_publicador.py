@@ -99,14 +99,11 @@ def obtener_politicas_ebay(tienda_id: str, tipo: str) -> dict:
 def obtener_ubicaciones_ebay(tienda_id: str) -> dict:
     """
     Obtiene las ubicaciones (locations) configuradas en la cuenta de eBay.
-    Cacheado por 1 hora por tienda para no saturar la API.
-    Retorna: dict { "Nombre de la Ubicación": "merchantLocationKey" }
     """
     url = f"{EBAY_INVENTORY_BASE_URL}/location"
     req = hacer_peticion_con_reintento("GET", url, tienda_id)
     
     if req.status_code != 200:
-        st.error(f"Error obteniendo ubicaciones: {req.text}")
         return {}
 
     datos = req.json()
@@ -114,7 +111,6 @@ def obtener_ubicaciones_ebay(tienda_id: str) -> dict:
     
     if "locations" in datos:
         for loc in datos["locations"]:
-            # Usar el nombre si existe, sino crear un string descriptivo.
             nombre = loc.get("name", "")
             postal = loc.get("location", {}).get("address", {}).get("postalCode", "Sin C.P.")
             pais = loc.get("location", {}).get("address", {}).get("country", "")
@@ -129,6 +125,39 @@ def obtener_ubicaciones_ebay(tienda_id: str) -> dict:
                 diccionario[nombre] = loc_key
                 
     return diccionario
+
+
+def crear_ubicacion_default(tienda_id: str) -> bool:
+    """
+    Crea una ubicación por defecto (USA Warehouse) para cuentas nuevas.
+    """
+    location_key = "DEFAULT_WAREHOUSE_US"
+    url = f"{EBAY_INVENTORY_BASE_URL}/location/{location_key}"
+    
+    payload = {
+        "location": {
+            "address": {
+                "addressLine1": "123 Main St",
+                "city": "Miami",
+                "stateOrProvince": "FL",
+                "postalCode": "33101",
+                "country": "US"
+            }
+        },
+        "locationWebUrl": "https://www.ebay.com",
+        "name": "Almacén Principal USA",
+        "merchantLocationStatus": "ENABLED",
+        "locationTypes": ["WAREHOUSE"]
+    }
+    
+    resp = hacer_peticion_con_reintento("POST", f"{EBAY_INVENTORY_BASE_URL}/location/{location_key}/create", tienda_id, payload)
+    
+    if resp.status_code in (200, 201, 204):
+        st.cache_data.clear() # Limpiar cache para que aparezca la nueva ubicación
+        return True
+    else:
+        st.error(f"Error creando ubicación: {resp.text}")
+        return False
 
 
 # ─────────────────────────────────────────────────────────
@@ -584,7 +613,14 @@ def main() -> None:
         st.stop()
         
     if not ubicaciones:
-        st.error("No se encontraron Ubicaciones (Locations) en esta cuenta. Configura al menos una ubicación en eBay.")
+        st.warning("⚠️ **Tu cuenta de eBay no tiene ninguna 'Ubicación' configurada.**")
+        st.info("eBay necesita saber desde dónde envías tus productos. ¿Quieres crear una ubicación por defecto en Miami, FL?")
+        
+        if st.button("📍 Crear Ubicación por Defecto (USA)"):
+            with st.spinner("Creando ubicación en eBay..."):
+                if crear_ubicacion_default(tienda_id):
+                    st.success("✅ Ubicación creada con éxito. Refrescando...")
+                    st.rerun()
         st.stop()
         
     p1, p2 = st.columns(2)
