@@ -204,23 +204,24 @@ def main() -> None:
             "redirect_uri": runame
         }
         
-        st.warning("🔄 Intercambiando código por tokens (esto ocurre en el servidor de Streamlit para evadir el bloqueo 503 local)...")
+        st.warning("🔄 Intercambiando código por tokens (esto ocurre en el servidor de Streamlit)...")
         try:
             resp = requests.post("https://api.ebay.com/identity/v1/oauth2/token", headers=headers, data=payload)
             if resp.status_code == 200:
-                st.success("✅ ¡ÉXITO! Copia estos tokens y pégalos en secrets.toml (sección tienda_chica_1):")
+                st.success("✅ ¡ÉXITO! Copia estos tokens y pégalos en los SECRETS de Streamlit Cloud para esta tienda:")
                 st.json(resp.json())
+                st.info("💡 **Consejo:** Una vez pegado en los secretos de Streamlit Cloud y guardado, borra el parámetro `?code=...` de la URL para entrar al Dashboard.")
             else:
                 st.error(f"❌ Error HTTP {resp.status_code}")
                 try:
-                    st.json(resp.json())
+                    data = resp.json()
+                    st.json(data)
                 except:
                     st.write(resp.text)
         except Exception as e:
             st.error(f"Excepción en el servidor: {str(e)}")
             
-        st.info("⚠️ Una vez copiados, borra todo lo que sigue al '?' en la URL (incluido el 'code=') para volver al Dashboard normal.")
-        st.stop() # Detenemos el renderizado del dashboard para no sobrecargar
+        st.stop() # Detenemos el renderizado para que no se pierdan los tokens de vista.
     # ========================================
 
     tiendas = cargar_tiendas()
