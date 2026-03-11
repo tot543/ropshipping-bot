@@ -61,50 +61,53 @@ def main() -> None:
             line_items = order.get("lineItems", [])
             line_item = line_items[0] if line_items else {}
             
-            # --- CORRECCIÓN 1: IMAGEN ---
-            item_id = line_item.get("legacyItemId", "")
-            # Si eBay no manda la foto, construimos la URL oficial forzando la imagen pública
-            if item_id:
-                img_url = f"https://i.ebayimg.com/images/i/{item_id}-0-1/s-l300/p.jpg"
-            else:
-                img_url = "https://via.placeholder.com/150?text=Sin+Imagen"
-                
+            # --- Columna 1: Imagen ---
+            item_id = line_item.get("legacyItemId", "N/A")
+            order_id = order.get("orderId")
+            
             with col_img:
-                st.image(img_url, use_container_width=True)
+                img_url = line_item.get("image", {}).get("imageUrl")
+                if not img_url and item_id != "N/A":
+                    # Intentar Fallback vía Browse API
+                    img_url = agente.get_item_image_fallback(token, item_id)
                 
-            # --- CORRECCIÓN 2: INFO Y PAYOUT ---
+                if img_url:
+                    st.image(img_url, use_container_width=True)
+                else:
+                    st.info("📦 Imagen no disponible")
+
+            # --- Columna 2: Info y Enlace ---
             with col_info:
                 titulo = line_item.get("title", "Producto sin título")
+                total_val = float(order.get("pricingSummary", {}).get("total", {}).get("value", 0.0))
+                total_str = f"{total_val:.2f}"
                 
-                # Precios
-                pricing = order.get("pricingSummary", {})
-                total_cobrado = float(pricing.get("total", {}).get("value", "0.00"))
+                # Intentar obtener Payout Exacto vía Finances API
+                payout_neto = agente.get_order_payout(token, order_id)
+                payout_label = "Neto a Recibir (Payout)"
                 
-                # El Payout Neto (Total que pagó el cliente menos los fees y taxes recolectados por eBay)
-                # Formula estándar de la API de Fulfillment: total - tax - fee
-                tax_ebay = float(pricing.get("tax", {}).get("value", "0.00"))
-                fee_ebay = float(pricing.get("fee", {}).get("value", "0.00"))
-                payout_neto = total_cobrado - tax_ebay - fee_ebay
+                if payout_neto is None:
+                    # Fallback Matemático: (Total - 15%) - (Total * 12%)
+                    payout_neto = (total_val * 0.85) - (total_val * 0.12)
+                    payout_label = "Neto Estimado (Calculado)"
                 
-                status_pago = order.get("orderPaymentStatus", "N/A")
+                status_pago = order.get("paymentSummary", {}).get("payments", [{}])[0].get("paymentStatus", "N/A")
                 buyer_user = order.get("buyer", {}).get("username", "")
                 
-                st.markdown(f"**{titulo[:65]}...**")
-                st.markdown(f"💰 **Total Cobrado:** USD {total_cobrado:.2f}")
-                st.markdown(f"🏦 **Neto a Recibir (Payout):** :green[USD {payout_neto:.2f}]")
+                st.markdown(f"**{titulo}**")
+                st.markdown(f"💰 **Total Cobrado:** USD {total_str}")
+                st.markdown(f"🏦 **{payout_label}:** :green[USD {payout_neto:.2f}]")
                 st.markdown(f"💳 **Estado Pago:** `{status_pago}`")
                 
                 c1, c2 = st.columns(2)
                 with c1:
-                    titulo_encodeado = urllib.parse.quote(titulo[:40]) # Solo usamos los primeros 40 caracteres para mejor búsqueda en Amazon
+                    titulo_encodeado = urllib.parse.quote(titulo)
                     amazon_url = f"https://www.amazon.com/s?k={titulo_encodeado}"
                     st.link_button("🛒 Buscar en Amazon", url=amazon_url, use_container_width=True)
-                
-                # --- CORRECCIÓN 3: BOTÓN DE CONTACTO ---
                 with c2:
-                    # El enlace correcto moderno de eBay para contactar al comprador
-                    contact_url = f"https://www.ebay.com/cnt/IntermediatedMsg?moduleId=110&messagePath=MY_EBAY_MSG&isReply=false&m2mContactOwner={buyer_user}&item={item_id}"
-                    st.link_button("📧 Contactar", url=contact_url, use_container_width=True)
+                    # Link al perfil público para contacto seguro
+                    contact_url = f"https://www.ebay.com/usr/{buyer_user}"
+                    st.link_button("📧 Contactar Comprador", url=contact_url, use_container_width=True)
                     
             # --- Columna 3: Dirección de Envío ---
             with col_addr:
