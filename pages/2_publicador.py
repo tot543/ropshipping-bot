@@ -109,7 +109,7 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     return ""
 
 
-def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "") -> str:
+def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "") -> str:
     """
     Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
     y opcionalmente sugerencias oficiales de la Taxonomy API.
@@ -128,7 +128,8 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
             "INSTRUCCIONES:\n"
             "1) Responde ÚNICAMENTE con el número del category ID.\n"
             "2) No incluyas texto, markdown ni explicaciones.\n"
-            "3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona la más lógica.{contexto_sugerencias}"
+            f"3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona la más lógica.{contexto_sugerencias}\n"
+            f"{extra_prompt}"
         )
         
         user_prompt = f"Título del producto: {titulo}"
@@ -542,6 +543,21 @@ def publicar_en_ebay(
                     cantidad = 1
                     intento_global += 1
                     continue
+
+                # 3. Error de Política/Local Pickup (25008)
+                if any(err.get("errorId") == 25008 for err in errores):
+                    with st.spinner("🧠 IA buscando una categoría que NO sea solo para recogida local..."):
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        # Forzar a la IA a evitar categorías de pickup
+                        nueva_cat = interpretar_error_categoria_ia(
+                            titulo, marketplace_id, sugerencias, 
+                            extra_prompt="IMPORTANTE: La categoría anterior era 'Local Pickup Only'. Selecciona una categoría que permita ENVÍO POR CORREO."
+                        )
+                        if nueva_cat:
+                            st.warning(f"🔄 Categoría incompatible detectada. Cambiando a `{nueva_cat}` (Envío permitido)...")
+                            producto["category_id"] = nueva_cat
+                            intento_global += 1
+                            continue
             
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
@@ -572,6 +588,20 @@ def publicar_en_ebay(
                     cantidad = 1
                     intento_global += 1
                     continue
+
+                # 3. Error de Política/Local Pickup (25008)
+                if any(err.get("errorId") == 25008 for err in errores):
+                    with st.spinner("🧠 IA rectificando categoría (Evitando Local Pickup)..."):
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        nueva_cat = interpretar_error_categoria_ia(
+                            titulo, marketplace_id, sugerencias,
+                            extra_prompt="EVITAR CATEGORÍAS DE 'LOCAL PICKUP ONLY'."
+                        )
+                        if nueva_cat:
+                            st.warning(f"🔄 Rectificando categoría incompatible a `{nueva_cat}`...")
+                            producto["category_id"] = nueva_cat
+                            intento_global += 1
+                            continue
             
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
