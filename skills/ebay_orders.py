@@ -123,6 +123,52 @@ class EbayOrdersAgent:
         
         return True, "Mensaje enviado (Simulado vía API)"
 
+    def get_order_payout(self, token: str, order_id: str) -> float | None:
+        """
+        Obtiene el monto neto real desde la Finances API de eBay.
+        """
+        if not token or not order_id:
+            return None
+
+        url = f"https://api.ebay.com/sell/finances/v1/transaction?filter=orderId:{{{order_id}}}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                for trans in data.get("transactions", []):
+                    if trans.get("transactionType") == "SALE":
+                        return float(trans.get("amount", {}).get("value", 0.0))
+            return None
+        except Exception:
+            return None
+
+    def get_item_image_fallback(self, token: str, legacy_item_id: str) -> str | None:
+        """
+        Obtiene la imagen oficial del producto usando la Browse API.
+        """
+        if not token or not legacy_item_id:
+            return None
+
+        url = f"https://api.ebay.com/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id={legacy_item_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("image", {}).get("imageUrl")
+            return None
+        except Exception:
+            return None
+
     def upload_tracking(self, token: str, order_id: str, tracking_number: str, carrier: str) -> tuple[bool, str]:
         """
         Sube el número de rastreo a eBay para una orden específica usando la API de Fulfillment.
