@@ -529,6 +529,18 @@ def publicar_en_ebay(
                             continue
                         else:
                             return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
+                # LUGAR 1 — Mano de error 25002 en Paso B (CreateOffer)
+                if any(err.get("errorId") == 25002 for err in errores):
+                    st.warning("⚠️ eBay requiere más especificaciones. Corrigiendo con IA...")
+                    error_json_str = json.dumps(req_offer.json())
+                    nuevos_aspectos = interpretar_error_aspectos_ia(error_json_str, titulo, bullets)
+                    if nuevos_aspectos:
+                        aspectos_dict.update(nuevos_aspectos)
+                        st.info(f"🔧 Aspectos corregidos: {list(nuevos_aspectos.keys())}")
+                        intento_global += 1
+                        continue
+                    else:
+                        return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
             
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
@@ -575,6 +587,18 @@ def publicar_en_ebay(
                             continue
                         else:
                             return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
+                # LUGAR 2 — Manejo de error 25002 en Paso C (PublishOffer)
+                if any(err.get("errorId") == 25002 for err in errores):
+                    st.warning("⚠️ eBay requiere más especificaciones (Publish). Corrigiendo con IA...")
+                    error_json_str = json.dumps(req_publish.json())
+                    nuevos_aspectos = interpretar_error_aspectos_ia(error_json_str, titulo, bullets)
+                    if nuevos_aspectos:
+                        aspectos_dict.update(nuevos_aspectos)
+                        st.info(f"🔧 Aspectos corregidos: {list(nuevos_aspectos.keys())}")
+                        intento_global += 1
+                        continue
+                    else:
+                        return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
             
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
