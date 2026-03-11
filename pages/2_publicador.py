@@ -125,12 +125,10 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
         sys_prompt = (
             f"Eres un experto en taxonomía de {marketplace_id}.\n"
             "Dada la descripción o título de un producto, debes devolver el CATEGORY ID (numérico) más apropiado para ese marketplace específico.\n"
-            "INSTRUCCIONES:\n"
-            "1) Responde ÚNICAMENTE con el número del category ID.\n"
-            "2) No incluyas texto, markdown ni explicaciones.\n"
             f"3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona la más lógica.{contexto_sugerencias}\n"
+            "4) PRIORIZA categorías que permitan envío postal (shipping). Evita 'Local Pickup Only' si existe una alternativa de envío.\n"
             f"{extra_prompt}"
-        )
+)
         
         user_prompt = f"Título del producto: {titulo}"
         
@@ -209,13 +207,13 @@ def hacer_peticion_con_reintento(
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def obtener_politicas_ebay(tienda_id: str, tipo: str) -> dict:
+def obtener_politicas_ebay(tienda_id: str, tipo: str, marketplace_id: str = "EBAY_US") -> dict:
     """
     Obtiene las políticas reales de la cuenta de eBay (fulfillment, payment, return).
-    Cacheado por 1 hora por tipo y tienda para no saturar la API.
+    Cacheado por 1 hora por tipo, tienda y marketplace.
     Retorna: dict { "Nombre Política": "ID_Politica" }
     """
-    url = f"{EBAY_ACCOUNT_BASE_URL}/{tipo}_policy?marketplace_id=EBAY_US"
+    url = f"{EBAY_ACCOUNT_BASE_URL}/{tipo}_policy?marketplace_id={marketplace_id}"
     # Llamamos a nuestro wrapper que maneja OAuth y reintentos automáticos
     req = hacer_peticion_con_reintento("GET", url, tienda_id)
     
@@ -483,7 +481,8 @@ def publicar_en_ebay(
 ) -> tuple[bool, str]:
     max_reintentos_globales = 3
     intento_global = 0
-    marketplace_id = config_tienda.get("site_id", "EBAY_US")
+    # Prioridad al marketplace detectado por el Cazador
+    marketplace_id = producto.get("marketplace_id") or config_tienda.get("site_id", "EBAY_US")
 
     while intento_global < max_reintentos_globales:
         sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
@@ -543,21 +542,6 @@ def publicar_en_ebay(
                     cantidad = 1
                     intento_global += 1
                     continue
-
-                # 3. Error de Política/Local Pickup (25008)
-                if any(err.get("errorId") == 25008 for err in errores):
-                    with st.spinner("🧠 IA buscando una categoría que NO sea solo para recogida local..."):
-                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        # Forzar a la IA a evitar categorías de pickup
-                        nueva_cat = interpretar_error_categoria_ia(
-                            titulo, marketplace_id, sugerencias, 
-                            extra_prompt="IMPORTANTE: La categoría anterior era 'Local Pickup Only'. Selecciona una categoría que permita ENVÍO POR CORREO."
-                        )
-                        if nueva_cat:
-                            st.warning(f"🔄 Categoría incompatible detectada. Cambiando a `{nueva_cat}` (Envío permitido)...")
-                            producto["category_id"] = nueva_cat
-                            intento_global += 1
-                            continue
             
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
@@ -588,20 +572,6 @@ def publicar_en_ebay(
                     cantidad = 1
                     intento_global += 1
                     continue
-
-                # 3. Error de Política/Local Pickup (25008)
-                if any(err.get("errorId") == 25008 for err in errores):
-                    with st.spinner("🧠 IA rectificando categoría (Evitando Local Pickup)..."):
-                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        nueva_cat = interpretar_error_categoria_ia(
-                            titulo, marketplace_id, sugerencias,
-                            extra_prompt="EVITAR CATEGORÍAS DE 'LOCAL PICKUP ONLY'."
-                        )
-                        if nueva_cat:
-                            st.warning(f"🔄 Rectificando categoría incompatible a `{nueva_cat}`...")
-                            producto["category_id"] = nueva_cat
-                            intento_global += 1
-                            continue
             
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
@@ -732,10 +702,12 @@ def main() -> None:
     # ── Selector Dinámico de Políticas y Ubicaciones ────────────────
     st.subheader("⚙️ Configuración de Listado (eBay Account & Inventory API)")
     
-    with st.spinner("Cargando información de tu cuenta de eBay..."):
-        politicas_envio = obtener_politicas_ebay(tienda_id, "fulfillment")
-        politicas_pago  = obtener_politicas_ebay(tienda_id, "payment")
-        politicas_devol = obtener_politicas_ebay(tienda_id, "return")
+    current_marketplace = producto.get("marketplace_id") or cfg.get("site_id", "EBAY_US")
+    
+    with st.spinner(f"Cargando información de tu cuenta ({current_marketplace})..."):
+        politicas_envio = obtener_politicas_ebay(tienda_id, "fulfillment", current_marketplace)
+        politicas_pago  = obtener_politicas_ebay(tienda_id, "payment", current_marketplace)
+        politicas_devol = obtener_politicas_ebay(tienda_id, "return", current_marketplace)
         ubicaciones     = obtener_ubicaciones_ebay(tienda_id)
         
     if not politicas_envio or not politicas_pago or not politicas_devol:

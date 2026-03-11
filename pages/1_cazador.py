@@ -106,9 +106,10 @@ def extraer_datos_ebay(item_id: str, tienda_id: str) -> dict:
         raise ValueError(f"eBay devolvió un precio de $0 para el Item ID {item_id}")
 
     return {
-        "titulo":      titulo,
-        "precio_ebay": precio,
-        "category_id": category_id,
+        "titulo":         titulo,
+        "precio_ebay":    precio,
+        "category_id":    category_id,
+        "marketplace_id": datos.get("marketplaceId", "EBAY_US")
     }
 
 
