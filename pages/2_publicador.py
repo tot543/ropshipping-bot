@@ -465,7 +465,7 @@ def publicar_en_ebay(
             url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
             payload_oferta = construir_payload_oferta(
                 producto, sku, config_tienda, 
-                id_envio, id_pago, id_devol, 
+                pol_fulfillment_id, pol_payment_id, pol_return_id, 
                 merchant_location_key,
                 descripcion_html_generada, cantidad,
                 marketplace_id=marketplace_id
