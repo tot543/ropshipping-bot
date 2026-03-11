@@ -173,14 +173,16 @@ def hacer_peticion_con_reintento(
     metodo: str,
     url: str,
     tienda_id: str,
-    payload: dict | None = None
+    payload: dict | None = None,
+    marketplace_id: str | None = None
 ) -> requests.Response:
     """
     Wrapper HTTP con auto-renovación OAuth en errores 401.
     """
-    # Recuperar marketplace_id para las cabeceras
-    config_tienda = st.session_state.get("config_tienda", {})
-    marketplace_id = config_tienda.get("site_id", "EBAY_US")
+    if marketplace_id is None:
+        # Recuperar marketplace_id default si no se provee
+        config_tienda = st.session_state.get("config_tienda", {})
+        marketplace_id = config_tienda.get("site_id", "EBAY_US")
 
     token = get_valid_token(tienda_id)
     headers = construir_headers_ebay(token, marketplace_id)
@@ -341,27 +343,28 @@ def construir_payload_oferta(
     producto: dict, 
     sku: str, 
     config_tienda: dict,
-    pol_fulfillment_id: str,
-    pol_payment_id: str,
-    pol_return_id: str,
+    id_envio: str,
+    id_pago: str,
+    id_devol: str,
     merchant_location_key: str,
     descripcion_html: str,
-    cantidad: int = 2
+    cantidad: int = 2,
+    marketplace_id: str = "EBAY_US"
 ) -> dict:
     """Paso B — CreateOffer: vincula el inventario a la tienda con precio, políticas y ubicación dinámicas."""
     precio_sugerido = float(producto.get("precio_sugerido", producto["precio_ebay"]))
 
     return {
         "sku":               sku,
-        "marketplaceId":     config_tienda.get("site_id", "EBAY_US"),
+        "marketplaceId":     marketplace_id,
         "format":            "FIXED_PRICE",
         "availableQuantity": cantidad,
         "categoryId":        str(producto["category_id"]),
         "listingDescription": descripcion_html,
         "listingPolicies": {
-            "fulfillmentPolicyId": pol_fulfillment_id,
-            "paymentPolicyId":     pol_payment_id,
-            "returnPolicyId":      pol_return_id,
+            "fulfillmentPolicyId": id_envio,
+            "paymentPolicyId":     id_pago,
+            "returnPolicyId":      id_devol,
         },
         "merchantLocationKey": merchant_location_key,
         "pricingSummary": {
@@ -507,7 +510,7 @@ def publicar_en_ebay(
             payload_item = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
             
             st.markdown(f"**Paso A (Intento {intento_global+1})** — `PUT {url_item}`")
-            req_item = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item)
+            req_item = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item, marketplace_id=marketplace_id)
             req_item.raise_for_status()
             st.success(f"✅ Inventory Item creado — SKU: `{sku}`")
 
@@ -515,12 +518,14 @@ def publicar_en_ebay(
             url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
             payload_oferta = construir_payload_oferta(
                 producto, sku, config_tienda, 
-                pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
-                descripcion_html_generada, cantidad
+                pol_fulfillment_id, pol_payment_id, pol_return_id, 
+                merchant_location_key,
+                descripcion_html_generada, cantidad,
+                marketplace_id=marketplace_id
             )
             
             st.markdown(f"**Paso B** — `POST {url_offer}`")
-            req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta)
+            req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta, marketplace_id=marketplace_id)
             
             if req_offer.status_code == 400:
                 errores = req_offer.json().get("errors", [])
@@ -550,7 +555,7 @@ def publicar_en_ebay(
             # ── Paso C: PublishOffer ──
             url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
             st.markdown(f"**Paso C** — `POST {url_publish}`")
-            req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {})
+            req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {}, marketplace_id=marketplace_id)
 
             if req_publish.status_code == 400:
                 errores = req_publish.json().get("errors", [])
