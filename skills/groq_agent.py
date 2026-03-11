@@ -85,3 +85,25 @@ class GroqAssistant:
         user_prompt += "\n".join([f"- {b}" for b in bullets])
         
         return self._llamar_groq(sys_prompt, user_prompt)
+
+    def interpretar_error_aspectos(self, error_json: str) -> list:
+        """
+        Analiza el JSON de error de eBay y extrae los nombres de los aspectos faltantes.
+        """
+        sys_prompt = (
+            "Eres un analista técnico de la API de eBay. Tu tarea es recibir un JSON de error "
+            "y extraer EXCLUSIVAMENTE los nombres de los aspectos (Item Specifics) que eBay indica que faltan o son requeridos."
+            "\n\nEjemplo de entrada: {'errors': [{'message': 'The item specific Brand is missing.'}]}"
+            "\nSalida esperada: ['Brand']"
+            "\n\nResponde SOLO una lista de Python válida (ej. [\"Brand\", \"Model\"]), sin explicaciones ni bloques de markdown."
+        )
+        try:
+            respuesta = self._llamar_groq(sys_prompt, f"Error JSON:\n{error_json}")
+            # Limpiar posibles bloques de código markdown si la IA ignora la instrucción de No Markdown
+            respuesta = respuesta.replace('```python', '').replace('```json', '').replace('```', '').strip()
+            # Asegurar formato de lista JSON
+            import ast
+            return ast.literal_eval(respuesta)
+        except Exception as e:
+            print(f"IA no pudo interpretar el error: {e}")
+            return []

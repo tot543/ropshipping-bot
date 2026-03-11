@@ -405,22 +405,19 @@ def publicar_en_ebay(
                         errores = req_item.json().get("errors", [])
                         errores_25002 = [err for err in errores if err.get("errorId") == 25002]
                         if errores_25002:
-                            aspectos_inyectados = []
-                            for err in errores_25002:
-                                mensaje = err.get("message", "")
-                                # Regex más robusta: captura lo que está entre "specific" y "is missing", "was not found" o "is required"
-                                match = re.search(r'specific\s+["\']?(.*?)["\']?\s+(?:is missing|was not found|is required)', mensaje, re.IGNORECASE)
-                                if match:
-                                    aspecto_faltante = match.group(1).strip()
-                                    aspectos_dict[aspecto_faltante] = ["Does not apply"]
-                                    aspectos_inyectados.append(aspecto_faltante)
-                            
-                            if aspectos_inyectados:
-                                st.info(f"🛠️ eBay exige: {', '.join(aspectos_inyectados)}. Inyectando automáticamente...")
-                                intento += 1
-                                continue
-                            else:
-                                st.warning(f"⚠️ eBay pide aspectos pero no pude identificar cuáles: {mensaje}")
+                            with st.spinner("🧠 IA interpretando requisitos de eBay..."):
+                                try:
+                                    aspectos_inyectados = agente_groq.interpretar_error_aspectos(req_item.text)
+                                    if aspectos_inyectados:
+                                        for asp in aspectos_inyectados:
+                                            aspectos_dict[asp] = ["Does not apply"]
+                                        st.info(f"🛠️ Super Intelligence: eBay exige: {', '.join(aspectos_inyectados)}. Inyectando automáticamente...")
+                                        intento += 1
+                                        continue
+                                    else:
+                                        st.warning("⚠️ La IA no pudo identificar qué aspectos faltan.")
+                                except Exception as ia_err:
+                                    st.warning(f"⚠️ Error en IA de recuperación: {ia_err}")
                     except Exception as ex:
                         st.warning(f"Error parseando auto-healing: {str(ex)}")
                 raise e
@@ -463,18 +460,12 @@ def publicar_en_ebay(
                     errores = req_publish.json().get("errors", [])
                     errores_25002 = [err for err in errores if err.get("errorId") == 25002]
                     if errores_25002 and intento_publish < max_reintentos_publish:
-                        aspectos_inyectados = []
-                        for err in errores_25002:
-                            mensaje = err.get("message", "")
-                            match = re.search(r'The item specific(.*?)(?:is missing|was not found)', mensaje, re.IGNORECASE)
-                            if match:
-                                aspecto_faltante = match.group(1).strip()
-                                aspectos_dict[aspecto_faltante] = ["Does not apply"]
-                                aspectos_inyectados.append(aspecto_faltante)
-
+                        with st.spinner("🧠 IA interpretando requisitos faltantes (Paso C)..."):
+                            aspectos_inyectados = agente_groq.interpretar_error_aspectos(req_publish.text)
+                        
                         if aspectos_inyectados:
                             intento_publish += 1
-                            st.warning(f"🔄 Auto-Healing (Paso C): eBay exige: **{', '.join(aspectos_inyectados)}**. Parcheando Inventory Item... (Intento {intento_publish}/{max_reintentos_publish})")
+                            st.warning(f"🔄 Super Intelligence: eBay exige **{', '.join(aspectos_inyectados)}**. Parcheando (Intento {intento_publish}/{max_reintentos_publish})...")
 
                             # Re-construir y re-enviar el Inventory Item con los aspectos nuevos
                             payload_item_fix = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
