@@ -109,7 +109,19 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
         
         contexto_sugerencias = ""
         if sugerencias_ebay:
-            contexto_sugerencias = f"\n\nSugerencias oficiales de eBay:\n{sugerencias_ebay}\n\nPor favor, elige la mejor de esta lista si es apropiada."
+            contexto_sugerencias = (
+                f"\n\nSugerencias oficiales de eBay:\n{sugerencias_ebay}\n\n"
+                "Por favor, elige la mejor de esta lista si es apropiada."
+            )
+        
+        sys_prompt = (
+            f"Eres un experto en taxonomía de {marketplace_id}.\n"
+            "Dada la descripción o título de un producto, debes devolver el CATEGORY ID "
+            "(numérico) más apropiado para ese marketplace específico.\n"
+            "3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona "
+            f"la más lógica.{contexto_sugerencias}\n"
+            "4) PRIORIZA categorías que permitan envío postal (shipping). "
+            "Evita 'Local Pickup Only' si existe una alternativa de envío.\n"
             f"{extra_prompt}\n"
             "5) NUNCA elijas estas categorías: Vehículos (Cars & Trucks), Motocicletas, "
             "Botes, Maquinaria agrícola/industrial pesada, Real Estate, Tickets & Experiences, "
@@ -118,7 +130,7 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
             "Consumer Electronics, Clothing, Home & Garden, Sporting Goods, Toys & Hobbies, "
             "Health & Beauty, o la más específica disponible con envío postal.\n"
             "7) Devuelve SOLO el número del Category ID, sin texto adicional."
-)
+        )
         
         user_prompt = f"Título del producto: {titulo}"
         
@@ -130,10 +142,12 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
             ]
         }
         
-        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers=headers, json=payload, timeout=20
+        )
         if resp.status_code == 200:
             res = resp.json()['choices'][0]['message']['content'].strip()
-            # Extraer solo el número
             match = re.search(r"(\d+)", res)
             if match:
                 return match.group(1)
