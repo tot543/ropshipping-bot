@@ -140,6 +140,10 @@ def main() -> None:
                                 st.success("✅ ¡Rastreo Subido!")
                             else:
                                 st.error(mensaje)
+                
+                # --- Debug JSON (Temporal para Arreglar Fees y Fotos) ---
+                with st.expander("🛠️ Debug: Ver Datos Crudos (JSON)"):
+                    st.json(order)
 
 if __name__ == "__main__":
     main()
