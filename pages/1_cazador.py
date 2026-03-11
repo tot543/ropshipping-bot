@@ -79,7 +79,24 @@ def extraer_datos_ebay(item_id: str, tienda_id: str) -> dict:
 
     titulo       = datos.get("title", "").strip()
     category_path = datos.get("categoryPath", "")
-    category_id  = datos.get("categoryId", category_path.split("|")[-1].strip() if "|" in category_path else category_path)
+    category_id  = datos.get("categoryId", "")
+    
+    # Si categoryId está vacío o no es puramente numérico, intentamos extraer del path
+    if not category_id or not str(category_id).isdigit():
+        if "|" in category_path:
+            raw_id = category_path.split("|")[-1].strip()
+            # Extraer solo dígitos por si viene con nombre
+            id_match = re.search(r"(\d+)", raw_id)
+            category_id = id_match.group(1) if id_match else raw_id
+        else:
+            category_id = category_path
+
+    # Limpieza final: asegurarnos de que sea solo el número
+    if isinstance(category_id, str):
+        id_match = re.search(r"(\d+)", category_id)
+        if id_match:
+            category_id = id_match.group(1)
+
     precio_str   = datos.get("price", {}).get("value", "0")
     precio       = float(precio_str)
 

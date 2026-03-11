@@ -77,6 +77,45 @@ def interpretar_error_aspectos_ia(error_json: str, titulo: str = "", bullets: li
     return {}
 
 
+def interpretar_error_categoria_ia(titulo: str = "") -> str:
+    """
+    Usa Groq para sugerir un Category ID numérico de eBay basado en el título.
+    """
+    try:
+        api_key = st.secrets["groq"]["api_key"]
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        
+        sys_prompt = (
+            "Eres un experto en taxonomía de eBay US.\n"
+            "Dada la descripción o título de un producto, debes devolver el CATEGORY ID (numérico) más apropiado.\n"
+            "INSTRUCCIONES:\n"
+            "1) Responde ÚNICAMENTE con el número del category ID.\n"
+            "2) No incluyas texto, markdown ni explicaciones.\n"
+            "3) Si no estás seguro, usa una categoría general como '172008' (Cámaras) o similar según el contexto."
+        )
+        
+        user_prompt = f"Título del producto: {titulo}"
+        
+        payload = {
+            "model": "openai/gpt-oss-120b",
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        }
+        
+        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+        if resp.status_code == 200:
+            res = resp.json()['choices'][0]['message']['content'].strip()
+            # Extraer solo el número por si la IA se puso habladora
+            match = re.search(r"(\d+)", res)
+            if match:
+                return match.group(1)
+    except Exception as e:
+        print(f"DEBUG IA CATEGORIA | Error: {e}")
+    return ""
+
+
 # ─────────────────────────────────────────────────────────
 # HELPERS HTTP
 # ─────────────────────────────────────────────────────────
@@ -472,24 +511,57 @@ def publicar_en_ebay(
                         st.warning(f"Error parseando auto-healing: {str(ex)}")
                 raise e
 
-        # ── Paso B: CreateOffer ──
-        payload_oferta = construir_payload_oferta(
-            producto, sku, config_tienda, 
-            pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
-            descripcion_html_generada, cantidad
-        )
+        # ── Paso B: CreateOffer (Con Auto-Healing para Categoría) ──
         url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
+        max_reintentos_offer = 3
+        intento_offer = 0
+        offer_id = None
+        
+        while intento_offer <= max_reintentos_offer and offer_id is None:
+            payload_oferta = construir_payload_oferta(
+                producto, sku, config_tienda, 
+                pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
+                descripcion_html_generada, cantidad
+            )
 
-        st.markdown(f"**Paso B** — `POST {url_offer}`")
-        with st.expander("📋 Ver payload Offer", expanded=False):
-            st.json(payload_oferta)
+            if intento_offer == 0:
+                st.markdown(f"**Paso B** — `POST {url_offer}`")
+                with st.expander("📋 Ver payload Offer", expanded=False):
+                    st.json(payload_oferta)
+            else:
+                st.warning(f"🔄 Auto-Healing Category: Reintento {intento_offer}/{max_reintentos_offer}...")
 
-        req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta)
-        req_offer.raise_for_status()
-        offer_id = req_offer.json().get("offerId", "")
-        st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
+            req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta)
+            
+            if req_offer.status_code in (200, 201):
+                offer_id = req_offer.json().get("offerId", "")
+                st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
+                break
+            
+            # Manejo de error de categoría (25005)
+            if req_offer.status_code == 400:
+                try:
+                    errores = req_offer.json().get("errors", [])
+                    if any(err.get("errorId") == 25005 for err in errores):
+                        with st.spinner("🧠 IA buscando una categoría válida para eBay..."):
+                            nueva_cat = interpretar_error_categoria_ia(titulo)
+                            if nueva_cat and nueva_cat != str(producto.get("category_id")):
+                                st.info(f"🛠️ IA sugiriendo nueva categoría: `{nueva_cat}`. Reintentando...")
+                                producto["category_id"] = nueva_cat
+                                intento_offer += 1
+                                continue
+                            else:
+                                st.error("❌ La IA no pudo encontrar una categoría alternativa válida.")
+                except Exception as ex:
+                    st.warning(f"Error en auto-healing de categoría: {ex}")
+            
+            # Si no es error de categoría o fallaron los reintentos
+            st.error(f"❌ Error {req_offer.status_code} al crear oferta.")
+            with st.expander("🔍 Detalles del error (Paso B)"):
+                st.code(req_offer.text, language="json")
+            req_offer.raise_for_status()
 
-        # ── Paso C: PublishOffer (Con Auto-Healing) ──
+        # ── Paso C: PublishOffer (Con Auto-Healing para Aspectos) ──
         url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
         st.markdown(f"**Paso C** — `POST {url_publish}`")
 
@@ -523,12 +595,10 @@ def publicar_en_ebay(
                             req_fix = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item_fix)
                             if req_fix.status_code in (200, 201, 204):
                                 st.info(f"✅ Inventory Item parcheado con: {', '.join(dict_ia.keys())}")
+                                continue
                             else:
                                 st.error(f"❌ No se pudo parchear el Inventory Item: {req_fix.text[:200]}")
-                                with st.expander("🔍 Detalles del fallo al parchear aspectos"):
-                                    st.code(req_fix.text, language="json")
                                 req_publish.raise_for_status()
-                            continue
                         else:
                             st.error("❌ Faltan aspectos pero no se pudieron auto-detectar.")
                 except Exception as ex:
