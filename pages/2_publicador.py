@@ -6,7 +6,6 @@ eBay a través de la Inventory API (CreateOrReplaceInventoryItem + CreateOffer).
 Usa OAuth con Auto-Renovación en cada petición HTTP.
 Incluye Promoted Listings Standard (Sell Marketing API) y Stock Dinámico.
 """
-
 import sys
 import os
 import uuid
@@ -15,17 +14,12 @@ import streamlit as st
 import requests
 import re
 from datetime import datetime, timezone
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.ebay_auth import get_valid_token, refresh_access_token
-
 st.set_page_config(page_title="Publicador Automático | eBay Hub", page_icon="🚀", layout="wide")
-
 EBAY_INVENTORY_BASE_URL  = "https://api.ebay.com/sell/inventory/v1"
 EBAY_ACCOUNT_BASE_URL    = "https://api.ebay.com/sell/account/v1"
 EBAY_MARKETING_BASE_URL  = "https://api.ebay.com/sell/marketing/v1"
-
-
 def interpretar_error_aspectos_ia(error_json: str, titulo: str = "", bullets: list = []) -> dict:
     """
     Analiza el JSON de error de eBay usando Groq de forma directa.
@@ -75,12 +69,46 @@ def interpretar_error_aspectos_ia(error_json: str, titulo: str = "", bullets: li
     except Exception as e:
         print(f"DEBUG IA LOCAL | Error: {e}")
     return {}
-
-
+def interpretar_error_categoria_ia(titulo: str = "") -> str:
+    """
+    Usa Groq para sugerir un Category ID numérico de eBay basado en el título.
+    """
+    try:
+        api_key = st.secrets["groq"]["api_key"]
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        
+        sys_prompt = (
+            "Eres un experto en taxonomía de eBay US.\n"
+            "Dada la descripción o título de un producto, debes devolver el CATEGORY ID (numérico) más apropiado.\n"
+            "INSTRUCCIONES:\n"
+            "1) Responde ÚNICAMENTE con el número del category ID.\n"
+            "2) No incluyas texto, markdown ni explicaciones.\n"
+            "3) Si no estás seguro, usa una categoría general como '172008' (Cámaras) o similar según el contexto."
+        )
+        
+        user_prompt = f"Título del producto: {titulo}"
+        
+        payload = {
+            "model": "openai/gpt-oss-120b",
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        }
+        
+        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+        if resp.status_code == 200:
+            res = resp.json()['choices'][0]['message']['content'].strip()
+            # Extraer solo el número por si la IA se puso habladora
+            match = re.search(r"(\d+)", res)
+            if match:
+                return match.group(1)
+    except Exception as e:
+        print(f"DEBUG IA CATEGORIA | Error: {e}")
+    return ""
 # ─────────────────────────────────────────────────────────
 # HELPERS HTTP
 # ─────────────────────────────────────────────────────────
-
 def construir_headers_ebay(token: str, marketplace_id: str = "EBAY_US") -> dict:
     """
     Retorna las cabeceras requeridas para la API de eBay.
@@ -92,8 +120,6 @@ def construir_headers_ebay(token: str, marketplace_id: str = "EBAY_US") -> dict:
         "Accept":                  "application/json",
         "X-EBAY-C-MARKETPLACE-ID": marketplace_id
     }
-
-
 def hacer_peticion_con_reintento(
     metodo: str,
     url: str,
@@ -106,31 +132,23 @@ def hacer_peticion_con_reintento(
     # Recuperar marketplace_id para las cabeceras
     config_tienda = st.session_state.get("config_tienda", {})
     marketplace_id = config_tienda.get("site_id", "EBAY_US")
-
     token = get_valid_token(tienda_id)
     headers = construir_headers_ebay(token, marketplace_id)
-
     kwargs = {"url": url, "headers": headers, "timeout": 20}
     if payload is not None:
         kwargs["json"] = payload
-
     respuesta = requests.request(metodo, **kwargs)
-
     # 1. Manejo de renovación de token (401)
     if respuesta.status_code == 401:
         st.warning("🔄 Token expirado. Auto-renovando...")
         nuevo_token = refresh_access_token(tienda_id)
         kwargs["headers"] = construir_headers_ebay(nuevo_token, marketplace_id)
         respuesta = requests.request(metodo, **kwargs)
-
     # 2. Log de depuración para errores críticos
     if respuesta.status_code >= 400:
         print(f"DEBUG EBAY API | {metodo} {url} | Status: {respuesta.status_code}")
         print(f"DEBUG EBAY API | Response: {respuesta.text[:500]}")
-
     return respuesta
-
-
 @st.cache_data(show_spinner=False, ttl=3600)
 def obtener_politicas_ebay(tienda_id: str, tipo: str) -> dict:
     """
@@ -145,7 +163,6 @@ def obtener_politicas_ebay(tienda_id: str, tipo: str) -> dict:
     if req.status_code != 200:
         st.error(f"Error obteniendo políticas de {tipo}: {req.text}")
         return {}
-
     datos = req.json()
     diccionario = {}
     
@@ -158,8 +175,6 @@ def obtener_politicas_ebay(tienda_id: str, tipo: str) -> dict:
                 diccionario[nombre] = pol_id
                 
     return diccionario
-
-
 @st.cache_data(show_spinner=False, ttl=3600)
 def obtener_ubicaciones_ebay(tienda_id: str) -> dict:
     """
@@ -170,7 +185,6 @@ def obtener_ubicaciones_ebay(tienda_id: str) -> dict:
     
     if req.status_code != 200:
         return {}
-
     datos = req.json()
     diccionario = {}
     
@@ -190,8 +204,6 @@ def obtener_ubicaciones_ebay(tienda_id: str) -> dict:
                 diccionario[nombre] = loc_key
                 
     return diccionario
-
-
 def crear_ubicacion_default(tienda_id: str) -> bool:
     """
     Crea una ubicación por defecto (USA Warehouse) con máxima transparencia.
@@ -230,15 +242,9 @@ def crear_ubicacion_default(tienda_id: str) -> bool:
             st.write(f"**Cuerpo de respuesta:**")
             st.code(resp.text, language="json")
         return False
-
-
 # ─────────────────────────────────────────────────────────
 # CONSTRUCTORES DE PAYLOAD
 # ─────────────────────────────────────────────────────────
-
-
-
-
 def construir_payload_inventory_item(producto: dict, descripcion_html: str, aspectos: dict, cantidad: int = 2) -> dict:
     """Paso A — CreateOrReplaceInventoryItem"""
     imagenes = producto.get("imagenes_amazon", [])
@@ -247,7 +253,6 @@ def construir_payload_inventory_item(producto: dict, descripcion_html: str, aspe
         imagenes = ["https://via.placeholder.com/800x800?text=Product+Image"]
     else:
         imagenes = imagenes[:12]
-
     return {
         "availability": {
             "shipToLocationAvailability": {"quantity": cantidad}
@@ -260,8 +265,6 @@ def construir_payload_inventory_item(producto: dict, descripcion_html: str, aspe
             "imageUrls": imagenes,
         },
     }
-
-
 def construir_payload_oferta(
     producto: dict, 
     sku: str, 
@@ -275,7 +278,6 @@ def construir_payload_oferta(
 ) -> dict:
     """Paso B — CreateOffer: vincula el inventario a la tienda con precio, políticas y ubicación dinámicas."""
     precio_sugerido = float(producto.get("precio_sugerido", producto["precio_ebay"]))
-
     return {
         "sku":               sku,
         "marketplaceId":     config_tienda.get("site_id", "EBAY_US"),
@@ -300,15 +302,10 @@ def construir_payload_oferta(
             "thirdPartyTaxCategory":  "Electronics"
         },
     }
-
-
 # ─────────────────────────────────────────────────────────
 # PROMOTED LISTINGS — SELL MARKETING API
 # ─────────────────────────────────────────────────────────
-
 NOMBRE_CAMPANA = "Auto_Dropshipping_Campaign"
-
-
 def buscar_o_crear_campana(tienda_id: str, ad_rate_pct: float) -> str | None:
     """
     Busca una campaña RUNNING llamada 'Auto_Dropshipping_Campaign'.
@@ -363,8 +360,6 @@ def buscar_o_crear_campana(tienda_id: str, ad_rate_pct: float) -> str | None:
     except Exception as e:
         st.warning(f"⚠️ Error buscando/creando campaña: {str(e)[:200]}")
         return None
-
-
 def agregar_ad_a_campana(tienda_id: str, campaign_id: str, listing_id: str, bid_pct: float) -> bool:
     """
     Añade un listingId a una campaña de Promoted Listings Standard.
@@ -386,12 +381,9 @@ def agregar_ad_a_campana(tienda_id: str, campaign_id: str, listing_id: str, bid_
     except Exception as e:
         st.warning(f"⚠️ Error al añadir ad: {str(e)[:200]}")
         return False
-
-
 # ─────────────────────────────────────────────────────────
 # FUNCIÓN PRINCIPAL DE PUBLICACIÓN
 # ─────────────────────────────────────────────────────────
-
 def publicar_en_ebay(
     producto: dict, 
     tienda_id: str, 
@@ -405,7 +397,6 @@ def publicar_en_ebay(
     ad_rate_pct: float = 12.0
 ) -> tuple[bool, str]:
     sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
-
     try:
         from skills.groq_agent import GroqAssistant
         agente_groq = GroqAssistant()
@@ -426,7 +417,6 @@ def publicar_en_ebay(
                     "Country/Region of Manufacture": ["United States"],
                     "Type": ["Does Not Apply"]
                 }
-
         # ── Paso A: CreateOrReplaceInventoryItem (Con Auto-Healing) ──
         url_item = f"{EBAY_INVENTORY_BASE_URL}/inventory_item/{sku}"
         max_reintentos = 3
@@ -471,39 +461,64 @@ def publicar_en_ebay(
                     except Exception as ex:
                         st.warning(f"Error parseando auto-healing: {str(ex)}")
                 raise e
-
-        # ── Paso B: CreateOffer ──
-        payload_oferta = construir_payload_oferta(
-            producto, sku, config_tienda, 
-            pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
-            descripcion_html_generada, cantidad
-        )
+        # ── Paso B: CreateOffer (Con Auto-Healing para Categoría) ──
         url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
-
-        st.markdown(f"**Paso B** — `POST {url_offer}`")
-        with st.expander("📋 Ver payload Offer", expanded=False):
-            st.json(payload_oferta)
-
-        req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta)
-        req_offer.raise_for_status()
-        offer_id = req_offer.json().get("offerId", "")
-        st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
-
-        # ── Paso C: PublishOffer (Con Auto-Healing) ──
+        max_reintentos_offer = 3
+        intento_offer = 0
+        offer_id = None
+        
+        while intento_offer <= max_reintentos_offer and offer_id is None:
+            payload_oferta = construir_payload_oferta(
+                producto, sku, config_tienda, 
+                pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
+                descripcion_html_generada, cantidad
+            )
+            if intento_offer == 0:
+                st.markdown(f"**Paso B** — `POST {url_offer}`")
+                with st.expander("📋 Ver payload Offer", expanded=False):
+                    st.json(payload_oferta)
+            else:
+                st.warning(f"🔄 Auto-Healing Category: Reintento {intento_offer}/{max_reintentos_offer}...")
+            req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta)
+            
+            if req_offer.status_code in (200, 201):
+                offer_id = req_offer.json().get("offerId", "")
+                st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
+                break
+            
+            # Manejo de error de categoría (25005)
+            if req_offer.status_code == 400:
+                try:
+                    errores = req_offer.json().get("errors", [])
+                    if any(err.get("errorId") == 25005 for err in errores):
+                        with st.spinner("🧠 IA buscando una categoría válida para eBay..."):
+                            nueva_cat = interpretar_error_categoria_ia(titulo)
+                            if nueva_cat and nueva_cat != str(producto.get("category_id")):
+                                st.info(f"🛠️ IA sugiriendo nueva categoría: `{nueva_cat}`. Reintentando...")
+                                producto["category_id"] = nueva_cat
+                                intento_offer += 1
+                                continue
+                            else:
+                                st.error("❌ La IA no pudo encontrar una categoría alternativa válida.")
+                except Exception as ex:
+                    st.warning(f"Error en auto-healing de categoría: {ex}")
+            
+            # Si no es error de categoría o fallaron los reintentos
+            st.error(f"❌ Error {req_offer.status_code} al crear oferta.")
+            with st.expander("🔍 Detalles del error (Paso B)"):
+                st.code(req_offer.text, language="json")
+            req_offer.raise_for_status()
+        # ── Paso C: PublishOffer (Con Auto-Healing para Aspectos) ──
         url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
         st.markdown(f"**Paso C** — `POST {url_publish}`")
-
         max_reintentos_publish = 3
         intento_publish = 0
         listing_id = None
-
         while intento_publish <= max_reintentos_publish and listing_id is None:
             req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {})
-
             if req_publish.status_code in (200, 201):
                 listing_id = req_publish.json().get("listingId", "N/A")
                 break
-
             # Auto-Healing: Si PublishOffer falla con 25002, parchear el Inventory Item
             if req_publish.status_code == 400:
                 try:
@@ -517,18 +532,15 @@ def publicar_en_ebay(
                             intento_publish += 1
                             aspectos_dict.update(dict_ia)
                             st.warning(f"🔄 Super Intelligence: IA sugiriendo valores para **{', '.join(dict_ia.keys())}**. Parcheando (Intento {intento_publish}/{max_reintentos_publish})...")
-
                             # Re-construir y re-enviar el Inventory Item con los aspectos nuevos
                             payload_item_fix = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
                             req_fix = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item_fix)
                             if req_fix.status_code in (200, 201, 204):
                                 st.info(f"✅ Inventory Item parcheado con: {', '.join(dict_ia.keys())}")
+                                continue
                             else:
                                 st.error(f"❌ No se pudo parchear el Inventory Item: {req_fix.text[:200]}")
-                                with st.expander("🔍 Detalles del fallo al parchear aspectos"):
-                                    st.code(req_fix.text, language="json")
                                 req_publish.raise_for_status()
-                            continue
                         else:
                             st.error("❌ Faltan aspectos pero no se pudieron auto-detectar.")
                 except Exception as ex:
@@ -541,16 +553,13 @@ def publicar_en_ebay(
                 st.write(f"**Respuesta de eBay:**")
                 st.code(req_publish.text, language="json")
             req_publish.raise_for_status()
-
         if listing_id is None:
             return False, "❌ No se pudo publicar después de múltiples intentos de auto-healing."
-
         mensaje_exito = (
             f"✅ **Publicado exitosamente**\n\n"
             f"🎫 **SKU:** `{sku}`\n\n"
             f"📌 **Listing ID:** [`{listing_id}`](https://www.ebay.com/itm/{listing_id})"
         )
-
         # ── Paso D: Promoted Listings (Opcional) ──
         if promocionar and listing_id != "N/A":
             st.markdown(f"**Paso D** — Promoted Listings Standard (Ad Rate: {ad_rate_pct}%)")
@@ -565,9 +574,7 @@ def publicar_en_ebay(
                         st.warning("⚠️ Producto publicado exitosamente, pero no se pudo añadir a Promoted Listings.")
                 else:
                     st.warning("⚠️ Producto publicado exitosamente, pero no se pudo crear/encontrar la campaña de Promoted Listings.")
-
         return (True, mensaje_exito)
-
     except requests.exceptions.HTTPError as e:
         codigo = e.response.status_code
         detalle = e.response.text[:400]
@@ -578,22 +585,17 @@ def publicar_en_ebay(
         return False, "❌ Sin conexión de red hacia eBay."
     except Exception as e:
         return False, f"❌ Error inesperado: {str(e)}"
-
-
 # ─────────────────────────────────────────────────────────
 # UI
 # ─────────────────────────────────────────────────────────
-
 def renderizar_sidebar() -> None:
     with st.sidebar:
         st.title("🚀 Publicador")
         st.markdown("---")
-
         if "tienda_activa_id" not in st.session_state:
             st.warning("⚠️ Selecciona una tienda en el Dashboard.")
             st.page_link("app.py", label="Ir al Dashboard")
             st.stop()
-
         t_id_sidebar = st.session_state.get("tienda_activa_id")
         t_nombre = st.session_state.get("config_tienda", {}).get("nombre", "")
         st.info(f"**Usuario:** {t_nombre}\n**ID:** `{t_id_sidebar}`")
@@ -603,37 +605,28 @@ def renderizar_sidebar() -> None:
                 st.success("Renovado!")
         st.markdown("---")
         st.page_link("pages/1_cazador.py", label="← Ir al Cazador")
-
-
 def main() -> None:
     renderizar_sidebar()
     st.title("🚀 Publicador Automático — eBay Inventory API")
-
     # ── Guardianes de Session State ──────────────────────
     if "tienda_activa_id" not in st.session_state:
         st.warning("⚠️ Sin tienda activa. Selecciona una en el Dashboard.")
         st.stop()
-
     tienda_id = st.session_state["tienda_activa_id"]
     cfg       = st.session_state["config_tienda"]
     producto  = st.session_state.get("producto_aprobado")
-
     st.info(f"🏪 **Sesión activa:** {cfg['nombre']} | API: eBay Inventory v1")
     st.divider()
-
     if not producto:
         st.warning("⚠️ **No hay producto aprobado.** Ve al Cazador y aprueba un producto primero.")
         st.page_link("pages/1_cazador.py", label="→ Ir al Cazador")
         st.stop()
-
     if producto.get("tienda_origen") != tienda_id:
         st.warning("⚠️ El producto fue cazado en otra tienda. Cambia de tienda o vuelve a cazar.")
         st.stop()
-
     # ── Panel de Revisión del Producto ───────────────────
     st.subheader("📦 Resumen del Producto a Publicar")
     col_info, col_img = st.columns([2, 1])
-
     with col_info:
         st.markdown(f"**Título:** {producto['titulo']}")
         st.markdown(f"**Category ID:** `{producto['category_id']}`")
@@ -642,14 +635,12 @@ def main() -> None:
         m1.metric("Precio Original eBay", f"${producto['precio_ebay']:.2f}")
         m2.metric("🏷️ Precio Sugerido (-$0.05)", f"${precio_sugerido:.2f}", delta="-$0.05 undercut")
         m3.metric("💰 Ganancia Neta Estimada", f"${producto['ganancia_neta']:.2f}", delta=f"{producto['margen_pct']}%")
-
     with col_img:
         imagenes = producto.get("imagenes_amazon", [])
         if imagenes:
             st.image(imagenes[0], caption="Imagen Principal (Amazon)", use_container_width=True)
         else:
             st.info("Sin imagen extraída.")
-
     # ── Expanders informativos ───────────────────────────
     with st.expander("🖼️ Todas las imágenes del producto", expanded=False):
         if imagenes:
@@ -658,7 +649,6 @@ def main() -> None:
                 cols[i % 4].image(img, use_container_width=True)
         else:
             st.info("No hay imágenes en el paquete.")
-
     with st.expander("📝 Bullets y descripción que se publicarán", expanded=False):
         bullets = producto.get("bullets_amazon", [])
         st.markdown("**Características:**")
@@ -666,12 +656,9 @@ def main() -> None:
             st.markdown(f"- {b}")
         st.markdown("**Descripción principal:**")
         st.info(producto.get("descripcion_amazon", "Sin descripción."))
-
     with st.expander("🔍 Preview del HTML que irá a eBay", expanded=False):
         st.info("La descripción HTML final y las especificaciones técnicas serán generadas en tiempo real por la Inteligencia Artificial (Groq) al momento de publicar.")
-
     st.divider()
-
     # ── Selector Dinámico de Políticas y Ubicaciones ────────────────
     st.subheader("⚙️ Configuración de Listado (eBay Account & Inventory API)")
     
@@ -708,9 +695,7 @@ def main() -> None:
     id_pago  = politicas_pago[sel_pago_nombre]
     id_devol = politicas_devol[sel_devol_nombre]
     id_ubicacion = ubicaciones[sel_ubicacion_nombre]
-
     st.divider()
-
     # ── Configuración Avanzada: Stock y Promoción ────────────────
     st.subheader("📊 Stock y Promoción")
     col_stock, col_promo = st.columns(2)
@@ -732,14 +717,11 @@ def main() -> None:
             )
         else:
             ad_rate_pct = 12.0
-
     st.divider()
-
     # ── Botón Principal ──────────────────────────────────
     col_btn, _ = st.columns([1, 3])
     with col_btn:
         botton_pub = st.button("🚀 Publicar en eBay AHORA", type="primary", use_container_width=True)
-
     if botton_pub:
         st.divider()
         st.subheader("📡 Progreso de la publicación")
@@ -751,7 +733,6 @@ def main() -> None:
                 promocionar=promocionar,
                 ad_rate_pct=ad_rate_pct
             )
-
         st.divider()
         if exito:
             st.success(mensaje)
@@ -760,7 +741,5 @@ def main() -> None:
         else:
             st.error(mensaje)
             st.info("💡 Si el error es 401, usa el botón 'Forzar Renovación OAuth' en la barra lateral.")
-
-
 if __name__ == "__main__":
     main()
