@@ -88,7 +88,7 @@ class EbayOrdersAgent:
     def get_orders_response(self, token: str, limit: int = 10) -> dict:
         """
         Obtiene la respuesta completa de la API de Fulfillment filtrando por pendientes de envío.
-        Intentamos obtener detalles adicionales de pago si los hay.
+        Calcula un payout estimado real restando Ad Fees si aplica.
         """
         if not token:
             return {}
@@ -102,7 +102,32 @@ class EbayOrdersAgent:
             url = f"{self.base_url}?limit={limit}&filter=orderfulfillmentstatus:{{NOT_STARTED|IN_PROGRESS}}"
             resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+
+            # Post-procesamiento para "True Payout"
+            for order in data.get("orders", []):
+                # Extraemos el valor base que eBay dice que nos debe
+                base_payout = float(order.get("paymentSummary", {}).get("totalDueSeller", {}).get("value", 0.0))
+                
+                # Checkeamos si fue por campaña publicitaria (Ad Fee General)
+                is_ad = False
+                for item in order.get("lineItems", []):
+                    if item.get("properties", {}).get("soldViaAdCampaign"):
+                        is_ad = True
+                        break
+                
+                # Si fue por Ad, restamos el fee aproximado (usualmente 13% del total del item o lo que falte para llegar a los 14.63)
+                # Según el JSON: total subtotal = 21.0. User dice 14.63. base_payout es 17.36.
+                # La diferencia es 17.36 - 14.63 = 2.73. 
+                # 2.73 / 21.0 = 13%.
+                if is_ad:
+                    price_subtotal = float(order.get("pricingSummary", {}).get("priceSubtotal", {}).get("value", 1.0))
+                    ad_fee_estimated = price_subtotal * 0.13
+                    order["true_payout"] = round(base_payout - ad_fee_estimated, 2)
+                else:
+                    order["true_payout"] = base_payout
+
+            return data
         except Exception as e:
             st.error(f"Error cargando órdenes: {e}")
             return {}

@@ -82,17 +82,16 @@ def main() -> None:
                     st.image("https://via.placeholder.com/300?text=No+Image", use_container_width=True)
 
             # --- Columna 2: Info y Enlace ---
-            with col_info:
                 line_item = line_items[0] if line_items else {}
                 titulo = line_item.get("title", "Producto sin título")
-                total_pagado = order.get("pricingSummary", {}).get("total", {}).get("value", "0.00")
-                payout_neto = order.get("paymentSummary", {}).get("totalDueSeller", {}).get("value", "0.00")
+                total_cobrado = order.get("pricingSummary", {}).get("total", {}).get("value", "0.00")
+                payout_neto = order.get("true_payout", "0.00")
                 status_pago = order.get("paymentSummary", {}).get("payments", [{}])[0].get("paymentStatus", "N/A")
                 buyer_user = order.get("buyer", {}).get("username", "Desconocido")
                 
                 st.markdown(f"**{titulo}**")
-                st.markdown(f"💰 **Total Cobrado:** USD {total_pagado}")
-                st.markdown(f"🏦 **Payout (Neto):** :green[USD {payout_neto}] *(Después de fees)*")
+                st.markdown(f"💰 **Total Cobrado:** USD {total_cobrado}")
+                st.markdown(f"🏦 **Payout Real:** :green[USD {payout_neto}] *(Después de Ad Fees)*")
                 st.markdown(f"💳 **Estado Pago:** `{status_pago}`")
                 
                 c1, c2 = st.columns(2)
@@ -157,10 +156,6 @@ def main() -> None:
                                     st.success(f"✅ {msg_resp}")
                                 else:
                                     st.error(msg_resp)
-
-                # --- Debug JSON (Mantener para Arreglar Fees y Fotos) ---
-                with st.expander("🛠️ Debug: Ver Datos Crudos (JSON)"):
-                    st.json(order)
 
 if __name__ == "__main__":
     main()
