@@ -531,16 +531,47 @@ def publicar_en_ebay(
                             return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
                 # LUGAR 1 — Mano de error 25002 en Paso B (CreateOffer)
                 if any(err.get("errorId") == 25002 for err in errores):
-                    st.warning("⚠️ eBay requiere más especificaciones. Corrigiendo con IA...")
                     error_json_str = json.dumps(req_offer.json())
-                    nuevos_aspectos = interpretar_error_aspectos_ia(error_json_str, titulo, bullets)
-                    if nuevos_aspectos:
-                        aspectos_dict.update(nuevos_aspectos)
-                        st.info(f"🔧 Aspectos corregidos: {list(nuevos_aspectos.keys())}")
-                        intento_global += 1
-                        continue
+                    ASPECTOS_ROPA = {"sleeve length", "size type", "size", "department", 
+                                     "style", "pattern", "fabric type", "gender", "age group",
+                                     "neckline", "fit", "occasion", "season", "theme"}
+                    aspectos_requeridos = set()
+                    for err in errores:
+                        if err.get("errorId") == 25002:
+                            params = err.get("parameters", [])
+                            for p in params:
+                                if p.get("name") == "2":
+                                    aspectos_requeridos.add(p.get("value", "").lower())
+                    
+                    es_categoria_ropa = bool(aspectos_requeridos & ASPECTOS_ROPA)
+                    
+                    if es_categoria_ropa:
+                        st.warning("⚠️ eBay detectó categoría de ropa para un producto que no es ropa. Cambiando categoría...")
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        extra = (
+                            "CRÍTICO: La categoría asignada es de ROPA pero el producto NO es ropa. "
+                            "eBay está pidiendo 'Sleeve Length', 'Size Type' u otros aspectos de vestimenta. "
+                            "DEBES elegir la categoría correcta para este producto ignorando completamente "
+                            "las categorías de Clothing, Shoes, Accessories, Apparel o Fashion."
+                        )
+                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra, bullets=bullets)
+                        if nueva_cat and nueva_cat != str(producto["category_id"]):
+                            st.warning(f"🔄 Categoría corregida (Ropa → Correcta): `{nueva_cat}`")
+                            producto["category_id"] = nueva_cat
+                            intento_global += 1
+                            continue
+                        else:
+                            return False, "❌ Error 25002: No se pudo asignar una categoría correcta para este producto."
                     else:
-                        return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
+                        st.warning("⚠️ eBay requiere más especificaciones. Corrigiendo con IA...")
+                        nuevos_aspectos = interpretar_error_aspectos_ia(error_json_str, titulo, bullets)
+                        if nuevos_aspectos:
+                            aspectos_dict.update(nuevos_aspectos)
+                            st.info(f"🔧 Aspectos corregidos: {list(nuevos_aspectos.keys())}")
+                            intento_global += 1
+                            continue
+                        else:
+                            return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
             
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
@@ -589,16 +620,47 @@ def publicar_en_ebay(
                             return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
                 # LUGAR 2 — Manejo de error 25002 en Paso C (PublishOffer)
                 if any(err.get("errorId") == 25002 for err in errores):
-                    st.warning("⚠️ eBay requiere más especificaciones (Publish). Corrigiendo con IA...")
                     error_json_str = json.dumps(req_publish.json())
-                    nuevos_aspectos = interpretar_error_aspectos_ia(error_json_str, titulo, bullets)
-                    if nuevos_aspectos:
-                        aspectos_dict.update(nuevos_aspectos)
-                        st.info(f"🔧 Aspectos corregidos: {list(nuevos_aspectos.keys())}")
-                        intento_global += 1
-                        continue
+                    ASPECTOS_ROPA = {"sleeve length", "size type", "size", "department", 
+                                     "style", "pattern", "fabric type", "gender", "age group",
+                                     "neckline", "fit", "occasion", "season", "theme"}
+                    aspectos_requeridos = set()
+                    for err in errores:
+                        if err.get("errorId") == 25002:
+                            params = err.get("parameters", [])
+                            for p in params:
+                                if p.get("name") == "2":
+                                    aspectos_requeridos.add(p.get("value", "").lower())
+                    
+                    es_categoria_ropa = bool(aspectos_requeridos & ASPECTOS_ROPA)
+                    
+                    if es_categoria_ropa:
+                        st.warning("⚠️ eBay detectó categoría de ropa para un producto que no es ropa. Cambiando categoría...")
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        extra = (
+                            "CRÍTICO: La categoría asignada es de ROPA pero el producto NO es ropa. "
+                            "eBay está pidiendo 'Sleeve Length', 'Size Type' u otros aspectos de vestimenta. "
+                            "DEBES elegir la categoría correcta para este producto ignorando completamente "
+                            "las categorías de Clothing, Shoes, Accessories, Apparel o Fashion."
+                        )
+                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra, bullets=bullets)
+                        if nueva_cat and nueva_cat != str(producto["category_id"]):
+                            st.warning(f"🔄 Categoría corregida (Ropa → Correcta): `{nueva_cat}`")
+                            producto["category_id"] = nueva_cat
+                            intento_global += 1
+                            continue
+                        else:
+                            return False, "❌ Error 25002: No se pudo asignar una categoría correcta para este producto."
                     else:
-                        return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
+                        st.warning("⚠️ eBay requiere más especificaciones (Publish). Corrigiendo con IA...")
+                        nuevos_aspectos = interpretar_error_aspectos_ia(error_json_str, titulo, bullets)
+                        if nuevos_aspectos:
+                            aspectos_dict.update(nuevos_aspectos)
+                            st.info(f"🔧 Aspectos corregidos: {list(nuevos_aspectos.keys())}")
+                            intento_global += 1
+                            continue
+                        else:
+                            return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
             
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
