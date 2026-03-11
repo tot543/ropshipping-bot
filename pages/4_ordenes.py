@@ -79,25 +79,32 @@ def main() -> None:
             # --- Columna 2: Info y Enlace ---
             with col_info:
                 titulo = line_item.get("title", "Producto sin título")
-                total_val = float(order.get("pricingSummary", {}).get("total", {}).get("value", 0.0))
-                total_str = f"{total_val:.2f}"
                 
-                # Intentar obtener Payout Exacto vía Finances API
-                payout_neto = agente.get_order_payout(token, order_id)
-                payout_label = "Neto a Recibir (Payout)"
+                # Extraer Total Pagado por el cliente
+                pricing = order.get("pricingSummary", {})
+                total_bruto = float(pricing.get("total", {}).get("value", "0.00"))
                 
-                if payout_neto is None:
-                    # Fallback Matemático: (Total - 15%) - (Total * 12%)
-                    payout_neto = (total_val * 0.85) - (total_val * 0.12)
-                    payout_label = "Neto Estimado (Calculado)"
+                # Extraer los impuestos recolectados por eBay
+                tax_ebay = float(pricing.get("tax", {}).get("value", "0.00"))
+                
+                # Extraer las comisiones de eBay
+                fee_ebay = float(pricing.get("fee", {}).get("value", "0.00"))
+                
+                # Payout Real de eBay (Total - Taxes de eBay - Comisiones)
+                payout_real = total_bruto - tax_ebay - fee_ebay
+                
+                st.markdown(f"**{titulo[:60]}...**")
+                st.markdown(f"💰 **Total Cobrado:** USD ${total_bruto:.2f}")
+                
+                # Mostrar Payout
+                if fee_ebay > 0:
+                    st.markdown(f"🏦 **Payout Real:** :green[USD ${payout_real:.2f}]")
+                    st.caption(f"*(Fees: -${fee_ebay:.2f} | Tax: -${tax_ebay:.2f})*")
+                else:
+                    st.markdown(f"🏦 **Payout Neto:** :orange[USD ${payout_real:.2f}]")
                 
                 status_pago = order.get("paymentSummary", {}).get("payments", [{}])[0].get("paymentStatus", "N/A")
                 buyer_user = order.get("buyer", {}).get("username", "")
-                
-                st.markdown(f"**{titulo}**")
-                st.markdown(f"💰 **Total Cobrado:** USD {total_str}")
-                st.markdown(f"🏦 **{payout_label}:** :green[USD {payout_neto:.2f}]")
-                st.markdown(f"💳 **Estado Pago:** `{status_pago}`")
                 
                 c1, c2 = st.columns(2)
                 with c1:

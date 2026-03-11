@@ -98,7 +98,7 @@ class EbayOrdersAgent:
         }
 
         try:
-            url = f"{self.base_url}?limit={limit}&filter=orderfulfillmentstatus:{{NOT_STARTED|IN_PROGRESS}}"
+            url = f"{self.base_url}?limit={limit}&filter=orderfulfillmentstatus:{{NOT_STARTED|IN_PROGRESS}}&fieldGroups=TAX_BREAKDOWN"
             resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
             return resp.json()
