@@ -123,25 +123,42 @@ def main() -> None:
                 st.code(address_text, language="text")
                 
                 # --- Gestión de Envío ---
-                with st.expander("🚚 Gestionar Envío", expanded=False):
-                    track_key = f"track_{order.get('orderId')}"
-                    carrier_key = f"carrier_{order.get('orderId')}"
-                    
-                    tracking_number = st.text_input("Nº Seguimiento:", placeholder="Ej: TBA...", key=track_key)
-                    carrier = st.selectbox("Transportista:", ["Amazon Logistics", "USPS", "UPS", "FedEx", "DHL"], key=carrier_key)
-                    
-                    if st.button("Subir Rastreo", type="primary", key=f"btn_send_{order.get('orderId')}"):
-                        if not tracking_number.strip():
-                            st.error("Ingresa un número de rastreo.")
-                        else:
-                            with st.spinner("Subiendo..."):
-                                exito, mensaje = agente.upload_tracking(token, order.get('orderId'), tracking_number.strip(), carrier)
-                            if exito:
-                                st.success("✅ ¡Rastreo Subido!")
-                            else:
-                                st.error(mensaje)
+                col_ship, col_msg = st.columns(2)
                 
-                # --- Debug JSON (Temporal para Arreglar Fees y Fotos) ---
+                with col_ship:
+                    with st.expander("🚚 Gestionar Envío", expanded=False):
+                        track_key = f"track_{order.get('orderId')}"
+                        carrier_key = f"carrier_{order.get('orderId')}"
+                        
+                        tracking_number = st.text_input("Nº Seguimiento:", placeholder="Ej: TBA...", key=track_key)
+                        carrier = st.selectbox("Transportista:", ["Amazon Logistics", "USPS", "UPS", "FedEx", "DHL"], key=carrier_key)
+                        
+                        if st.button("Subir Rastreo", type="primary", key=f"btn_send_{order.get('orderId')}"):
+                            if not tracking_number.strip():
+                                st.error("Ingresa un número de rastreo.")
+                            else:
+                                with st.spinner("Subiendo..."):
+                                    exito, mensaje = agente.upload_tracking(token, order.get('orderId'), tracking_number.strip(), carrier)
+                                if exito:
+                                    st.success("✅ ¡Rastreo Subido!")
+                                else:
+                                    st.error(mensaje)
+
+                with col_msg:
+                    with st.expander("📧 Mensaje al Comprador", expanded=False):
+                        msg_text = st.text_area("Mensaje:", placeholder="Ej: Gracias por tu compra...", key=f"txt_msg_{order.get('orderId')}")
+                        if st.button("Enviar Mensaje API", type="secondary", key=f"btn_msg_{order.get('orderId')}"):
+                            if not msg_text.strip():
+                                st.error("Escribe un mensaje.")
+                            else:
+                                with st.spinner("Enviando..."):
+                                    exito_msg, msg_resp = agente.send_buyer_message(token, order.get('orderId'), msg_text)
+                                if exito_msg:
+                                    st.success(f"✅ {msg_resp}")
+                                else:
+                                    st.error(msg_resp)
+
+                # --- Debug JSON (Mantener para Arreglar Fees y Fotos) ---
                 with st.expander("🛠️ Debug: Ver Datos Crudos (JSON)"):
                     st.json(order)
 
