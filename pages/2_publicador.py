@@ -524,6 +524,7 @@ def publicar_en_ebay(
             
             if req_offer.status_code == 400:
                 errores = req_offer.json().get("errors", [])
+                # 1. Error de Categoría (25005)
                 if any(err.get("errorId") == 25005 for err in errores):
                     with st.spinner("🔍 Consultando Taxonomy API de eBay..."):
                         sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
@@ -534,6 +535,13 @@ def publicar_en_ebay(
                                 producto["category_id"] = nueva_cat
                                 intento_global += 1
                                 continue
+                
+                # 2. Error de Cantidad (25006)
+                if any(err.get("errorId") == 25006 for err in errores):
+                    st.warning("⚠️ eBay solo permite cantidad de 1 en esta categoría. Ajustando stock a 1 y reintentando...")
+                    cantidad = 1
+                    intento_global += 1
+                    continue
             
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
@@ -546,6 +554,7 @@ def publicar_en_ebay(
 
             if req_publish.status_code == 400:
                 errores = req_publish.json().get("errors", [])
+                # 1. Error de Categoría (25005)
                 if any(err.get("errorId") == 25005 for err in errores):
                     with st.spinner("🔍 Consultando Taxonomy API (desde Publish)..."):
                         sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
@@ -556,6 +565,13 @@ def publicar_en_ebay(
                                 producto["category_id"] = nueva_cat
                                 intento_global += 1
                                 continue
+                
+                # 2. Error de Cantidad (25006)
+                if any(err.get("errorId") == 25006 for err in errores):
+                    st.warning("⚠️ eBay solo permite cantidad de 1 (detectado en Publish). Ajustando stock a 1 y reintentando...")
+                    cantidad = 1
+                    intento_global += 1
+                    continue
             
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
