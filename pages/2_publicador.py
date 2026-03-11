@@ -26,6 +26,41 @@ EBAY_ACCOUNT_BASE_URL    = "https://api.ebay.com/sell/account/v1"
 EBAY_MARKETING_BASE_URL  = "https://api.ebay.com/sell/marketing/v1"
 
 
+def interpretar_error_aspectos_ia(error_json: str) -> list:
+    """
+    Analiza el JSON de error de eBay usando Groq de forma directa para evitar problemas de caché.
+    Extrae los nombres de los aspectos faltantes o con errores.
+    """
+    try:
+        api_key = st.secrets["groq"]["api_key"]
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        
+        sys_prompt = (
+            "Eres un analista técnico de eBay. Lee el JSON de error y devuelve una lista Python "
+            "con los nombres de los Item Specifics (aspectos) que eBay pide corregir o añadir."
+            "\n\nEjemplo: {'errors': [{'message': 'Material should contain only one'}]} -> ['Material']"
+            "\nSalida: Solo la lista, ej: ['Brand', 'Material']"
+        )
+        
+        payload = {
+            "model": "openai/gpt-oss-120b",
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": f"Error JSON:\n{error_json}"}
+            ]
+        }
+        
+        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
+        if resp.status_code == 200:
+            texto = resp.json()['choices'][0]['message']['content']
+            texto = texto.replace('```python', '').replace('```json', '').replace('```', '').strip()
+            import ast
+            return ast.literal_eval(texto)
+    except Exception as e:
+        print(f"DEBUG IA LOCAL | Error: {e}")
+    return []
+
+
 # ─────────────────────────────────────────────────────────
 # HELPERS HTTP
 # ─────────────────────────────────────────────────────────
@@ -407,11 +442,11 @@ def publicar_en_ebay(
                         if errores_25002:
                             with st.spinner("🧠 IA interpretando requisitos de eBay..."):
                                 try:
-                                    aspectos_inyectados = agente_groq.interpretar_error_aspectos(req_item.text)
+                                    aspectos_inyectados = interpretar_error_aspectos_ia(req_item.text)
                                     if aspectos_inyectados:
                                         for asp in aspectos_inyectados:
                                             aspectos_dict[asp] = ["Does not apply"]
-                                        st.info(f"🛠️ Super Intelligence: eBay exige: {', '.join(aspectos_inyectados)}. Inyectando automáticamente...")
+                                        st.info(f"🛠️ Super Intelligence: eBay exige corregir: {', '.join(aspectos_inyectados)}. Inyectando automáticamente...")
                                         intento += 1
                                         continue
                                     else:
@@ -461,7 +496,7 @@ def publicar_en_ebay(
                     errores_25002 = [err for err in errores if err.get("errorId") == 25002]
                     if errores_25002 and intento_publish < max_reintentos_publish:
                         with st.spinner("🧠 IA interpretando requisitos faltantes (Paso C)..."):
-                            aspectos_inyectados = agente_groq.interpretar_error_aspectos(req_publish.text)
+                            aspectos_inyectados = interpretar_error_aspectos_ia(req_publish.text)
                         
                         if aspectos_inyectados:
                             intento_publish += 1
