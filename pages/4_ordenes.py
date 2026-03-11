@@ -1,15 +1,14 @@
 import sys
 import os
-import time
-import pandas as pd
-import streamlit as st
 import urllib.parse
+import streamlit as st
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.ebay_auth import get_valid_token, refresh_access_token
 from skills.ebay_orders import EbayOrdersAgent
 
 st.set_page_config(page_title="Órdenes y Despachos | eBay Hub", page_icon="📦", layout="wide")
+
 def renderizar_sidebar() -> None:
     with st.sidebar:
         st.title("📦 Despachos")
@@ -44,12 +43,13 @@ def main() -> None:
     
     token = get_valid_token(tienda_id)
     agente = EbayOrdersAgent()
+    
     with st.spinner("Conectando con eBay Fulfillment API..."):
         ordenes_data = agente.get_orders_response(token, limit=20)
         
     orders_list = ordenes_data.get("orders", [])
     if not orders_list:
-        st.warning("⚠️ No se encontraron órdenes recientes.")
+        st.warning("⚠️ No se encontraron órdenes recientes pendientes de envío.")
         st.stop()
         
     st.markdown(f"### 📋 Órdenes Pendientes ({len(orders_list)})")
@@ -60,63 +60,60 @@ def main() -> None:
             
             line_items = order.get("lineItems", [])
             line_item = line_items[0] if line_items else {}
-            
-            # --- Columna 1: Imagen ---
             item_id = line_item.get("legacyItemId", "N/A")
             order_id = order.get("orderId")
             
+            # --- COLUMNA 1: IMAGEN ---
             with col_img:
                 img_url = line_item.get("image", {}).get("imageUrl")
                 if not img_url and item_id != "N/A":
-                    # Intentar Fallback vía Browse API
                     img_url = agente.get_item_image_fallback(token, item_id)
                 
                 if img_url:
                     st.image(img_url, use_container_width=True)
                 else:
                     st.info("📦 Imagen no disponible")
-
-            # --- Columna 2: Info y Enlace ---
+                    
+            # --- COLUMNA 2: INFO, PAYOUT REAL Y BOTONES ---
             with col_info:
                 titulo = line_item.get("title", "Producto sin título")
                 
-                # Extraer Total Pagado por el cliente
+                # Extraer Total Pagado por el cliente desde Fulfillment
                 pricing = order.get("pricingSummary", {})
                 total_bruto = float(pricing.get("total", {}).get("value", "0.00"))
                 
-                # Extraer los impuestos recolectados por eBay
-                tax_ebay = float(pricing.get("tax", {}).get("value", "0.00"))
-                
-                # Extraer las comisiones de eBay
-                fee_ebay = float(pricing.get("fee", {}).get("value", "0.00"))
-                
-                # Payout Real de eBay (Total - Taxes de eBay - Comisiones)
-                payout_real = total_bruto - tax_ebay - fee_ebay
-                
                 st.markdown(f"**{titulo[:60]}...**")
-                st.markdown(f"💰 **Total Cobrado:** USD ${total_bruto:.2f}")
+                st.markdown(f"💰 **Total Cobrado (Cliente):** USD ${total_bruto:.2f}")
                 
-                # Mostrar Payout
-                if fee_ebay > 0:
+                # === OBTENER EL PAYOUT EXACTO USANDO LA API DE FINANZAS ===
+                # Llama a la función que me mandaste en tu script `EbayOrdersAgent`
+                payout_real = agente.get_order_payout(token, order_id)
+                
+                if payout_real is not None:
+                    # ¡Este es el número exacto que te envía eBay a Payoneer!
                     st.markdown(f"🏦 **Payout Real:** :green[USD ${payout_real:.2f}]")
-                    st.caption(f"*(Fees: -${fee_ebay:.2f} | Tax: -${tax_ebay:.2f})*")
+                    st.caption("*(Validado con Finances API)*")
                 else:
-                    st.markdown(f"🏦 **Payout Neto:** :orange[USD ${payout_real:.2f}]")
+                    # Fallback matemático por si el pago está procesándose
+                    precio_sin_tax = total_bruto / 1.08
+                    costo_fees = (total_bruto * 0.15) + (precio_sin_tax * 0.12) + 0.30
+                    payout_estimado = total_bruto - costo_fees
+                    st.markdown(f"🏦 **Payout Estimado:** :orange[USD ${payout_estimado:.2f}]")
+                    st.caption("*(Aún procesando comisiones en eBay)*")
                 
-                status_pago = order.get("paymentSummary", {}).get("payments", [{}])[0].get("paymentStatus", "N/A")
+                status_pago = order.get("orderPaymentStatus", "N/A")
                 buyer_user = order.get("buyer", {}).get("username", "")
                 
                 c1, c2 = st.columns(2)
                 with c1:
-                    titulo_encodeado = urllib.parse.quote(titulo)
+                    titulo_encodeado = urllib.parse.quote(titulo[:40])
                     amazon_url = f"https://www.amazon.com/s?k={titulo_encodeado}"
                     st.link_button("🛒 Buscar en Amazon", url=amazon_url, use_container_width=True)
                 with c2:
-                    # Link al perfil público para contacto seguro
                     contact_url = f"https://www.ebay.com/usr/{buyer_user}"
                     st.link_button("📧 Contactar Comprador", url=contact_url, use_container_width=True)
                     
-            # --- Columna 3: Dirección de Envío ---
+            # --- COLUMNA 3: DIRECCIÓN DE ENVÍO ---
             with col_addr:
                 shipping_step = order.get("fulfillmentStartInstructions", [{}])[0].get("shippingStep", {})
                 ship_to = shipping_step.get("shipTo", {})
@@ -129,7 +126,6 @@ def main() -> None:
                 state = addr.get("stateOrProvince", "")
                 zip_code = addr.get("postalCode", "")
                 
-                # Construcción segura de la dirección
                 address_lines = [full_name, line1]
                 if line2: address_lines.append(line2)
                 address_lines.append(f"{city}, {state} {zip_code}")
@@ -138,7 +134,6 @@ def main() -> None:
                 st.markdown("**📍 Dirección de Envío:**")
                 st.code(address_text, language="text")
                 
-                # --- Gestión de Envío ---
                 with st.expander("🚚 Gestionar Envío", expanded=False):
                     track_key = f"track_{order.get('orderId')}"
                     carrier_key = f"carrier_{order.get('orderId')}"
