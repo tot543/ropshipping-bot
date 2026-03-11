@@ -26,27 +26,41 @@ EBAY_ACCOUNT_BASE_URL    = "https://api.ebay.com/sell/account/v1"
 EBAY_MARKETING_BASE_URL  = "https://api.ebay.com/sell/marketing/v1"
 
 
-def interpretar_error_aspectos_ia(error_json: str) -> list:
+def interpretar_error_aspectos_ia(error_json: str, titulo: str = "", bullets: list = []) -> dict:
     """
-    Analiza el JSON de error de eBay usando Groq de forma directa para evitar problemas de caché.
-    Extrae los nombres de los aspectos faltantes o con errores.
+    Analiza el JSON de error de eBay usando Groq de forma directa.
+    Extrae los nombres faltantes y SUGIERE un valor real basado en el título del producto.
+    Retorna un diccionario: {"NombreAspecto": ["ValorSugerido"]}
     """
     try:
         api_key = st.secrets["groq"]["api_key"]
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         
         sys_prompt = (
-            "Eres un analista técnico de eBay. Lee el JSON de error y devuelve una lista Python "
-            "con los nombres de los Item Specifics (aspectos) que eBay pide corregir o añadir."
-            "\n\nEjemplo: {'errors': [{'message': 'Material should contain only one'}]} -> ['Material']"
-            "\nSalida: Solo la lista, ej: ['Brand', 'Material']"
+            "Eres un analista técnico de eBay. Tu misión es corregir errores de 'Item Specifics'.\n"
+            "INSTRUCCIONES:\n"
+            "1) Lee el JSON de error para identificar los aspectos que faltan o están mal.\n"
+            "2) Lee el Título y Características del producto para ADIVINAR el valor real de ese aspecto.\n"
+            "3) Si eBay dice 'should contain only one', asegúrate de devolver SOLO un valor en la lista.\n"
+            "4) Si no puedes adivinar el valor, usa ['N/A'] o ['Other'].\n"
+            "\nEjemplo de entrada:\n"
+            "Error: {'message': 'Material should contain only one'}\n"
+            "Producto: 'Camiseta de Algodón Azul'\n"
+            "Salida esperada: {'Material': ['Cotton']}\n"
+            "\nDevuelve SOLO un diccionario JSON válido de Python, sin markdown."
+        )
+        
+        user_prompt = (
+            f"PRODUCTO: {titulo}\n"
+            f"CARACTERISTICAS: {', '.join(bullets)}\n"
+            f"ERROR EBAY: {error_json}"
         )
         
         payload = {
             "model": "openai/gpt-oss-120b",
             "messages": [
                 {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": f"Error JSON:\n{error_json}"}
+                {"role": "user", "content": user_prompt}
             ]
         }
         
@@ -55,10 +69,12 @@ def interpretar_error_aspectos_ia(error_json: str) -> list:
             texto = resp.json()['choices'][0]['message']['content']
             texto = texto.replace('```python', '').replace('```json', '').replace('```', '').strip()
             import ast
-            return ast.literal_eval(texto)
+            res = ast.literal_eval(texto)
+            if isinstance(res, dict):
+                return res
     except Exception as e:
         print(f"DEBUG IA LOCAL | Error: {e}")
-    return []
+    return {}
 
 
 # ─────────────────────────────────────────────────────────
@@ -442,11 +458,10 @@ def publicar_en_ebay(
                         if errores_25002:
                             with st.spinner("🧠 IA interpretando requisitos de eBay..."):
                                 try:
-                                    aspectos_inyectados = interpretar_error_aspectos_ia(req_item.text)
-                                    if aspectos_inyectados:
-                                        for asp in aspectos_inyectados:
-                                            aspectos_dict[asp] = ["Does not apply"]
-                                        st.info(f"🛠️ Super Intelligence: eBay exige corregir: {', '.join(aspectos_inyectados)}. Inyectando automáticamente...")
+                                    dict_ia = interpretar_error_aspectos_ia(req_item.text, titulo, bullets)
+                                    if dict_ia:
+                                        aspectos_dict.update(dict_ia)
+                                        st.info(f"🛠️ Super Intelligence: IA sugiriendo valores corregidos: {', '.join(dict_ia.keys())}. Aplicando...")
                                         intento += 1
                                         continue
                                     else:
@@ -496,17 +511,18 @@ def publicar_en_ebay(
                     errores_25002 = [err for err in errores if err.get("errorId") == 25002]
                     if errores_25002 and intento_publish < max_reintentos_publish:
                         with st.spinner("🧠 IA interpretando requisitos faltantes (Paso C)..."):
-                            aspectos_inyectados = interpretar_error_aspectos_ia(req_publish.text)
+                            dict_ia = interpretar_error_aspectos_ia(req_publish.text, titulo, bullets)
                         
-                        if aspectos_inyectados:
+                        if dict_ia:
                             intento_publish += 1
-                            st.warning(f"🔄 Super Intelligence: eBay exige **{', '.join(aspectos_inyectados)}**. Parcheando (Intento {intento_publish}/{max_reintentos_publish})...")
+                            aspectos_dict.update(dict_ia)
+                            st.warning(f"🔄 Super Intelligence: IA sugiriendo valores para **{', '.join(dict_ia.keys())}**. Parcheando (Intento {intento_publish}/{max_reintentos_publish})...")
 
                             # Re-construir y re-enviar el Inventory Item con los aspectos nuevos
                             payload_item_fix = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
                             req_fix = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item_fix)
                             if req_fix.status_code in (200, 201, 204):
-                                st.info(f"✅ Inventory Item parcheado con: {', '.join(aspectos_inyectados)}")
+                                st.info(f"✅ Inventory Item parcheado con: {', '.join(dict_ia.keys())}")
                             else:
                                 st.error(f"❌ No se pudo parchear el Inventory Item: {req_fix.text[:200]}")
                                 with st.expander("🔍 Detalles del fallo al parchear aspectos"):
