@@ -519,10 +519,12 @@ def publicar_en_ebay(
             if req_publish.status_code in (200, 201):
                 listing_id = req_publish.json().get("listingId", "N/A")
                 break
-            # Auto-Healing: Si PublishOffer falla con 25002, parchear el Inventory Item
+            # Auto-Healing: Si PublishOffer falla con 25002 (Aspectos) o 25005 (Categoría)
             if req_publish.status_code == 400:
                 try:
                     errores = req_publish.json().get("errors", [])
+                    
+                    # 1. Error de Aspectos (Error 25002)
                     errores_25002 = [err for err in errores if err.get("errorId") == 25002]
                     if errores_25002 and intento_publish < max_reintentos_publish:
                         with st.spinner("🧠 IA interpretando requisitos faltantes (Paso C)..."):
@@ -541,8 +543,32 @@ def publicar_en_ebay(
                             else:
                                 st.error(f"❌ No se pudo parchear el Inventory Item: {req_fix.text[:200]}")
                                 req_publish.raise_for_status()
-                        else:
-                            st.error("❌ Faltan aspectos pero no se pudieron auto-detectar.")
+                    
+                    # 2. Error de Categoría (Error 25005)
+                    errores_25005 = [err for err in errores if err.get("errorId") == 25005]
+                    if errores_25005 and intento_publish < max_reintentos_publish:
+                        with st.spinner("🧠 IA rectificando categoría (Paso C)..."):
+                            nueva_cat = interpretar_error_categoria_ia(titulo)
+                            if nueva_cat and nueva_cat != str(producto.get("category_id")):
+                                st.warning(f"🔄 IA rectificando categoría: `{nueva_cat}`. Actualizando oferta...")
+                                producto["category_id"] = nueva_cat
+                                
+                                # Re-construir payload y actualizar la oferta
+                                payload_oferta_fix = construir_payload_oferta(
+                                    producto, sku, config_tienda, 
+                                    pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
+                                    descripcion_html_generada, cantidad
+                                )
+                                url_offer_update = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}"
+                                req_upd = hacer_peticion_con_reintento("PUT", url_offer_update, tienda_id, payload_oferta_fix)
+                                
+                                if req_upd.status_code in (200, 204):
+                                    st.info("✅ Oferta actualizada con nueva categoría. Reintentando publicación...")
+                                    intento_publish += 1
+                                    continue
+                                else:
+                                    st.error(f"❌ Error al actualizar categoría en la oferta: {req_upd.text[:200]}")
+                                    req_publish.raise_for_status()
                 except Exception as ex:
                     st.warning(f"Error parseando auto-healing en Paso C: {str(ex)}")
             
