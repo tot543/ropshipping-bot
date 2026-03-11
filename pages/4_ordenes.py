@@ -66,30 +66,43 @@ def main() -> None:
             # --- Columna 1: Imagen ---
             item_id = "N/A"
             line_items = order.get("lineItems", [])
+            img_url = ""
+            
             if line_items:
                 item_id = line_items[0].get("legacyItemId", "N/A")
+                img_url = line_items[0].get("image", {}).get("imageUrl", "")
             
             with col_img:
-                if item_id != "N/A":
-                    img_url = f"https://i.ebayimg.com/images/i/{item_id}-0-1/s-l300/p.jpg"
+                if img_url:
                     st.image(img_url, use_container_width=True)
+                elif item_id != "N/A":
+                    # Fallback URL
+                    st.image(f"https://i.ebayimg.com/images/i/{item_id}-0-1/s-l300/p.jpg", use_container_width=True)
                 else:
                     st.image("https://via.placeholder.com/300?text=No+Image", use_container_width=True)
 
             # --- Columna 2: Info y Enlace ---
             with col_info:
-                titulo = line_items[0].get("title", "Producto sin título") if line_items else "Sin productos"
+                line_item = line_items[0] if line_items else {}
+                titulo = line_item.get("title", "Producto sin título")
                 total_pagado = order.get("pricingSummary", {}).get("total", {}).get("value", "0.00")
+                payout_neto = order.get("paymentSummary", {}).get("totalDueSeller", {}).get("value", "0.00")
                 status_pago = order.get("paymentSummary", {}).get("payments", [{}])[0].get("paymentStatus", "N/A")
+                buyer_user = order.get("buyer", {}).get("username", "Desconocido")
                 
                 st.markdown(f"**{titulo}**")
-                st.markdown(f"💰 **Total:** USD {total_pagado}")
-                st.markdown(f"💳 **Estado:** `{status_pago}`")
-                st.markdown(f"🆔 **Item ID:** `{item_id}`")
+                st.markdown(f"💰 **Total Cobrado:** USD {total_pagado}")
+                st.markdown(f"🏦 **Payout (Neto):** :green[USD {payout_neto}] *(Después de fees)*")
+                st.markdown(f"💳 **Estado Pago:** `{status_pago}`")
                 
-                titulo_encodeado = urllib.parse.quote(titulo)
-                amazon_url = f"https://www.amazon.com/s?k={titulo_encodeado}"
-                st.link_button("🛒 Buscar en Amazon", url=amazon_url)
+                c1, c2 = st.columns(2)
+                with c1:
+                    titulo_encodeado = urllib.parse.quote(titulo)
+                    amazon_url = f"https://www.amazon.com/s?k={titulo_encodeado}"
+                    st.link_button("🛒 Buscar en Amazon", url=amazon_url, use_container_width=True)
+                with c2:
+                    contact_url = f"https://www.ebay.com/cnt/interact?requested={buyer_user}&itemid={item_id}"
+                    st.link_button("📧 Contactar Comprador", url=contact_url, use_container_width=True)
 
             # --- Columna 3: Dirección de Envío ---
             with col_addr:
