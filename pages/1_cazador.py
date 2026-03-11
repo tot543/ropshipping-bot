@@ -88,10 +88,33 @@ def extraer_datos_ebay(item_id: str, tienda_id: str) -> dict:
         raise ValueError(f"eBay no devolvió un título para el Item ID {item_id}")
     if precio <= 0:
         raise ValueError(f"eBay devolvió un precio de $0 para el Item ID {item_id}")
+    # FIX 2 — Validar categoría con Taxonomy API para obtener la categoría hoja correcta
+    try:
+        url_tree = "https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US"
+        resp_tree = requests.get(url_tree, headers=headers, timeout=10)
+        if resp_tree.status_code == 200:
+            tree_id = resp_tree.json().get("categoryTreeId", "")
+            if tree_id:
+                url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_suggestion?q={titulo}"
+                resp_sug = requests.get(url_sug, headers=headers, timeout=10)
+                if resp_sug.status_code == 200:
+                    sugerencias = resp_sug.json().get("categorySuggestions", [])
+                    if sugerencias:
+                        # Obtener la primera sugerencia (usualmente la mejor)
+                        primera_sug = sugerencias[0]
+                        cat_sugerida = primera_sug.get("category", {})
+                        cat_id_sugerida = str(cat_sugerida.get("categoryId", ""))
+                        cat_nombre = cat_sugerida.get("categoryName", "")
+                        if cat_id_sugerida and cat_id_sugerida != str(category_id):
+                            st.info(f"🔍 Taxonomía eBay sugiere categoría hoja: `{cat_id_sugerida}` ({cat_nombre})")
+                            category_id = cat_id_sugerida
+    except Exception as e:
+        print(f"DEBUG TAXONOMY CAZADOR | Error: {e}")
     return {
-        "titulo":      titulo,
-        "precio_ebay": precio,
-        "category_id": category_id,
+        "titulo":         titulo,
+        "precio_ebay":    precio,
+        "category_id":    category_id,
+        "marketplace_id": datos.get("marketplaceId", "EBAY_US")
     }
 # ─────────────────────────────────────────────────────────
 # EXTRACCIÓN AMAZON — ScraperAPI + BeautifulSoup (PRODUCCIÓN)
