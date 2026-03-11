@@ -69,21 +69,54 @@ def interpretar_error_aspectos_ia(error_json: str, titulo: str = "", bullets: li
     except Exception as e:
         print(f"DEBUG IA LOCAL | Error: {e}")
     return {}
-def interpretar_error_categoria_ia(titulo: str = "") -> str:
+def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US") -> str:
     """
-    Usa Groq para sugerir un Category ID numérico de eBay basado en el título.
+    Consulta la Taxonomy API de eBay para obtener sugerencias oficiales de categorías.
+    Retorna una cadena formateada con las sugerencias para pasarle a la IA.
+    """
+    try:
+        # 1. Obtener el ID del árbol de categorías para el marketplace
+        url_tree = f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}"
+        resp_tree = hacer_peticion_con_reintento("GET", url_tree, tienda_id)
+        if resp_tree.status_code != 200:
+            return ""
+        
+        tree_id = resp_tree.json().get("categoryTreeId")
+        if not tree_id:
+            return ""
+        # 2. Obtener sugerencias basadas en el título
+        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_suggestion?q={titulo}"
+        resp_sug = hacer_peticion_con_reintento("GET", url_sug, tienda_id)
+        
+        if resp_sug.status_code == 200:
+            suggestions = resp_sug.json().get("categorySuggestions", [])
+            output = []
+            for s in suggestions[:5]:
+                cat = s.get("category", {})
+                output.append(f"ID: {cat.get('categoryId')} | Nombre: {cat.get('categoryName')}")
+            return "\n".join(output)
+    except Exception as e:
+        print(f"DEBUG TAXONOMY | Error: {e}")
+    return ""
+def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "") -> str:
+    """
+    Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
+    y opcionalmente sugerencias oficiales de la Taxonomy API.
     """
     try:
         api_key = st.secrets["groq"]["api_key"]
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         
+        contexto_sugerencias = ""
+        if sugerencias_ebay:
+            contexto_sugerencias = f"\n\nSugerencias oficiales de eBay:\n{sugerencias_ebay}\n\nPor favor, elige la mejor de esta lista si es apropiada."
         sys_prompt = (
-            "Eres un experto en taxonomía de eBay US.\n"
-            "Dada la descripción o título de un producto, debes devolver el CATEGORY ID (numérico) más apropiado.\n"
+            f"Eres un experto en taxonomía de {marketplace_id}.\n"
+            "Dada la descripción o título de un producto, debes devolver el CATEGORY ID (numérico) más apropiado para ese marketplace específico.\n"
             "INSTRUCCIONES:\n"
             "1) Responde ÚNICAMENTE con el número del category ID.\n"
             "2) No incluyas texto, markdown ni explicaciones.\n"
-            "3) Si no estás seguro, usa una categoría general como '172008' (Cámaras) o similar según el contexto."
+            "3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona la más lógica.{contexto_sugerencias}"
         )
         
         user_prompt = f"Título del producto: {titulo}"
@@ -99,7 +132,7 @@ def interpretar_error_categoria_ia(titulo: str = "") -> str:
         resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
         if resp.status_code == 200:
             res = resp.json()['choices'][0]['message']['content'].strip()
-            # Extraer solo el número por si la IA se puso habladora
+            # Extraer solo el número
             match = re.search(r"(\d+)", res)
             if match:
                 return match.group(1)
@@ -396,221 +429,108 @@ def publicar_en_ebay(
     promocionar: bool = False,
     ad_rate_pct: float = 12.0
 ) -> tuple[bool, str]:
-    sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
-    try:
-        from skills.groq_agent import GroqAssistant
-        agente_groq = GroqAssistant()
-        
-        with st.spinner('🧠 Groq redactando descripción y specs...'):
-            titulo = producto['titulo']
-            bullets = producto.get('bullets_amazon', [])
+    max_reintentos_globales = 3
+    intento_global = 0
+    marketplace_id = config_tienda.get("site_id", "EBAY_US")
+    while intento_global < max_reintentos_globales:
+        sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
+        try:
+            from skills.groq_agent import GroqAssistant
+            agente_groq = GroqAssistant()
             
-            descripcion_html_generada = agente_groq.generar_descripcion(titulo, bullets)
+            # Solo generamos descripción y aspectos en el primer intento global
+            if intento_global == 0:
+                with st.spinner('🧠 Groq redactando descripción y specs...'):
+                    titulo = producto['titulo']
+                    bullets = producto.get('bullets_amazon', [])
+                    descripcion_html_generada = agente_groq.generar_descripcion(titulo, bullets)
+                    aspectos_json = agente_groq.generar_aspectos(titulo, bullets)
+                    try:
+                        aspectos_dict = json.loads(aspectos_json)
+                    except Exception:
+                        aspectos_dict = {"Brand": ["Unbranded"], "MPN": ["Does Not Apply"]}
             
-            aspectos_json = agente_groq.generar_aspectos(titulo, bullets)
-            try:
-                aspectos_dict = json.loads(aspectos_json)
-            except Exception:
-                aspectos_dict = {
-                    "Brand": ["Unbranded"],
-                    "MPN": ["Does Not Apply"],
-                    "Country/Region of Manufacture": ["United States"],
-                    "Type": ["Does Not Apply"]
-                }
-        # ── Paso A: CreateOrReplaceInventoryItem (Con Auto-Healing) ──
-        url_item = f"{EBAY_INVENTORY_BASE_URL}/inventory_item/{sku}"
-        max_reintentos = 3
-        intento = 0
-        exito_item = False
-        
-        while intento <= max_reintentos and not exito_item:
+            # ── Paso A: CreateOrReplaceInventoryItem ──
+            url_item = f"{EBAY_INVENTORY_BASE_URL}/inventory_item/{sku}"
             payload_item = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
             
-            if intento == 0:
-                st.markdown(f"**Paso A** — `PUT {url_item}`")
-                with st.expander("📋 Ver payload Inventory Item", expanded=False):
-                    st.json(payload_item)
-            else:
-                st.warning(f"🔄 Auto-Healing Action: Reintento {intento}/{max_reintentos} para Inventory Item...")
-                
+            st.markdown(f"**Paso A (Intento {intento_global+1})** — `PUT {url_item}`")
             req_item = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item)
-            
-            try:
-                req_item.raise_for_status()
-                exito_item = True
-                st.success(f"✅ Inventory Item creado — SKU: `{sku}` | Cantidad: {cantidad}")
-            except requests.exceptions.HTTPError as e:
-                # Intentar auto-healing si el error es de cliente (400)
-                if req_item.status_code == 400:
-                    try:
-                        errores = req_item.json().get("errors", [])
-                        errores_25002 = [err for err in errores if err.get("errorId") == 25002]
-                        if errores_25002:
-                            with st.spinner("🧠 IA interpretando requisitos de eBay..."):
-                                try:
-                                    dict_ia = interpretar_error_aspectos_ia(req_item.text, titulo, bullets)
-                                    if dict_ia:
-                                        aspectos_dict.update(dict_ia)
-                                        st.info(f"🛠️ Super Intelligence: IA sugiriendo valores corregidos: {', '.join(dict_ia.keys())}. Aplicando...")
-                                        intento += 1
-                                        continue
-                                    else:
-                                        st.warning("⚠️ La IA no pudo identificar qué aspectos faltan.")
-                                except Exception as ia_err:
-                                    st.warning(f"⚠️ Error en IA de recuperación: {ia_err}")
-                    except Exception as ex:
-                        st.warning(f"Error parseando auto-healing: {str(ex)}")
-                raise e
-        # ── Paso B: CreateOffer (Con Auto-Healing para Categoría) ──
-        url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
-        max_reintentos_offer = 3
-        intento_offer = 0
-        offer_id = None
-        
-        while intento_offer <= max_reintentos_offer and offer_id is None:
+            req_item.raise_for_status()
+            st.success(f"✅ Inventory Item creado — SKU: `{sku}`")
+            # ── Paso B: CreateOffer ──
+            url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
             payload_oferta = construir_payload_oferta(
                 producto, sku, config_tienda, 
                 pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
                 descripcion_html_generada, cantidad
             )
-            if intento_offer == 0:
-                st.markdown(f"**Paso B** — `POST {url_offer}`")
-                with st.expander("📋 Ver payload Offer", expanded=False):
-                    st.json(payload_oferta)
-            else:
-                st.warning(f"🔄 Auto-Healing Category: Reintento {intento_offer}/{max_reintentos_offer}...")
+            
+            st.markdown(f"**Paso B** — `POST {url_offer}`")
             req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta)
             
-            if req_offer.status_code in (200, 201):
-                offer_id = req_offer.json().get("offerId", "")
-                st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
-                break
-            
-            # Manejo de error de categoría (25005)
             if req_offer.status_code == 400:
-                try:
-                    errores = req_offer.json().get("errors", [])
-                    if any(err.get("errorId") == 25005 for err in errores):
-                        with st.spinner("🧠 IA buscando una categoría válida para eBay..."):
-                            nueva_cat = interpretar_error_categoria_ia(titulo)
-                            if nueva_cat and nueva_cat != str(producto.get("category_id")):
-                                st.info(f"🛠️ IA sugiriendo nueva categoría: `{nueva_cat}`. Reintentando...")
+                errores = req_offer.json().get("errors", [])
+                if any(err.get("errorId") == 25005 for err in errores):
+                    with st.spinner("🔍 Consultando Taxonomy API de eBay..."):
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        with st.spinner("🧠 IA eligiendo la mejor categoría oficial..."):
+                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias)
+                            if nueva_cat:
+                                st.warning(f"🔄 Categoría rectificada: `{nueva_cat}`. Probando con SKU fresco...")
                                 producto["category_id"] = nueva_cat
-                                intento_offer += 1
+                                intento_global += 1
                                 continue
-                            else:
-                                st.error("❌ La IA no pudo encontrar una categoría alternativa válida.")
-                except Exception as ex:
-                    st.warning(f"Error en auto-healing de categoría: {ex}")
             
-            # Si no es error de categoría o fallaron los reintentos
-            st.error(f"❌ Error {req_offer.status_code} al crear oferta.")
-            with st.expander("🔍 Detalles del error (Paso B)"):
-                st.code(req_offer.text, language="json")
             req_offer.raise_for_status()
-        # ── Paso C: PublishOffer (Con Auto-Healing para Aspectos) ──
-        url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
-        st.markdown(f"**Paso C** — `POST {url_publish}`")
-        max_reintentos_publish = 3
-        intento_publish = 0
-        listing_id = None
-        while intento_publish <= max_reintentos_publish and listing_id is None:
+            offer_id = req_offer.json().get("offerId", "")
+            st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
+            # ── Paso C: PublishOffer ──
+            url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
+            st.markdown(f"**Paso C** — `POST {url_publish}`")
             req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {})
-            if req_publish.status_code in (200, 201):
-                listing_id = req_publish.json().get("listingId", "N/A")
-                break
-            # Auto-Healing: Si PublishOffer falla con 25002 (Aspectos) o 25005 (Categoría)
             if req_publish.status_code == 400:
-                try:
-                    errores = req_publish.json().get("errors", [])
-                    
-                    # 1. Error de Aspectos (Error 25002)
-                    errores_25002 = [err for err in errores if err.get("errorId") == 25002]
-                    if errores_25002 and intento_publish < max_reintentos_publish:
-                        with st.spinner("🧠 IA interpretando requisitos faltantes (Paso C)..."):
-                            dict_ia = interpretar_error_aspectos_ia(req_publish.text, titulo, bullets)
-                        
-                        if dict_ia:
-                            intento_publish += 1
-                            aspectos_dict.update(dict_ia)
-                            st.warning(f"🔄 Super Intelligence: IA sugiriendo valores para **{', '.join(dict_ia.keys())}**. Parcheando (Intento {intento_publish}/{max_reintentos_publish})...")
-                            # Re-construir y re-enviar el Inventory Item con los aspectos nuevos
-                            payload_item_fix = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
-                            req_fix = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item_fix)
-                            if req_fix.status_code in (200, 201, 204):
-                                st.info(f"✅ Inventory Item parcheado con: {', '.join(dict_ia.keys())}")
-                                continue
-                            else:
-                                st.error(f"❌ No se pudo parchear el Inventory Item: {req_fix.text[:200]}")
-                                req_publish.raise_for_status()
-                    
-                    # 2. Error de Categoría (Error 25005)
-                    errores_25005 = [err for err in errores if err.get("errorId") == 25005]
-                    if errores_25005 and intento_publish < max_reintentos_publish:
-                        with st.spinner("🧠 IA rectificando categoría (Paso C)..."):
-                            nueva_cat = interpretar_error_categoria_ia(titulo)
-                            if nueva_cat and nueva_cat != str(producto.get("category_id")):
-                                st.warning(f"🔄 IA rectificando categoría: `{nueva_cat}`. Actualizando oferta...")
+                errores = req_publish.json().get("errors", [])
+                if any(err.get("errorId") == 25005 for err in errores):
+                    with st.spinner("🔍 Consultando Taxonomy API (desde Publish)..."):
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        with st.spinner("🧠 IA rectificando categoría..."):
+                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias)
+                            if nueva_cat:
+                                st.warning(f"🔄 Rectificando a `{nueva_cat}` con SKU fresco...")
                                 producto["category_id"] = nueva_cat
-                                
-                                # Re-construir payload y actualizar la oferta
-                                payload_oferta_fix = construir_payload_oferta(
-                                    producto, sku, config_tienda, 
-                                    pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
-                                    descripcion_html_generada, cantidad
-                                )
-                                url_offer_update = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}"
-                                req_upd = hacer_peticion_con_reintento("PUT", url_offer_update, tienda_id, payload_oferta_fix)
-                                
-                                if req_upd.status_code in (200, 204):
-                                    st.info("✅ Oferta actualizada con nueva categoría. Reintentando publicación...")
-                                    intento_publish += 1
-                                    continue
-                                else:
-                                    st.error(f"❌ Error al actualizar categoría en la oferta: {req_upd.text[:200]}")
-                                    req_publish.raise_for_status()
-                except Exception as ex:
-                    st.warning(f"Error parseando auto-healing en Paso C: {str(ex)}")
+                                intento_global += 1
+                                continue
             
-            # Si falló y no hubo auto-healing exitoso
-            st.error(f"❌ Error {req_publish.status_code} al publicar oferta.")
-            with st.expander("🔍 Ver Detalles Técnicos (Paso C)"):
-                st.write(f"**URL:** `{url_publish}`")
-                st.write(f"**Respuesta de eBay:**")
-                st.code(req_publish.text, language="json")
             req_publish.raise_for_status()
-        if listing_id is None:
-            return False, "❌ No se pudo publicar después de múltiples intentos de auto-healing."
-        mensaje_exito = (
-            f"✅ **Publicado exitosamente**\n\n"
-            f"🎫 **SKU:** `{sku}`\n\n"
-            f"📌 **Listing ID:** [`{listing_id}`](https://www.ebay.com/itm/{listing_id})"
-        )
-        # ── Paso D: Promoted Listings (Opcional) ──
-        if promocionar and listing_id != "N/A":
-            st.markdown(f"**Paso D** — Promoted Listings Standard (Ad Rate: {ad_rate_pct}%)")
-            with st.spinner("📢 Promocionando producto..."):
+            listing_id = req_publish.json().get("listingId", "N/A")
+            
+            mensaje_exito = (
+                f"✅ **Publicado exitosamente**\n\n"
+                f"🎫 **SKU:** `{sku}`\n\n"
+                f"📌 **Listing ID:** [`{listing_id}`](https://www.ebay.com/itm/{listing_id})"
+            )
+            # ── Paso D: Promoted Listings ──
+            if promocionar and listing_id != "N/A":
+                st.markdown(f"**Paso D** — Promoted Listings Standard")
                 campaign_id = buscar_o_crear_campana(tienda_id, ad_rate_pct)
                 if campaign_id:
-                    exito_ad = agregar_ad_a_campana(tienda_id, campaign_id, listing_id, ad_rate_pct)
-                    if exito_ad:
-                        st.success(f"📢 Producto promocionado — Ad Rate: {ad_rate_pct}% | Campaña: `{campaign_id}`")
+                    if agregar_ad_a_campana(tienda_id, campaign_id, listing_id, ad_rate_pct):
+                        st.success(f"📢 Producto promocionado: {ad_rate_pct}%")
                         mensaje_exito += f"\n\n📢 **Promoted Listings:** Ad Rate {ad_rate_pct}%"
-                    else:
-                        st.warning("⚠️ Producto publicado exitosamente, pero no se pudo añadir a Promoted Listings.")
-                else:
-                    st.warning("⚠️ Producto publicado exitosamente, pero no se pudo crear/encontrar la campaña de Promoted Listings.")
-        return (True, mensaje_exito)
-    except requests.exceptions.HTTPError as e:
-        codigo = e.response.status_code
-        detalle = e.response.text[:400]
-        return False, f"❌ Error HTTP {codigo} en eBay API:\n```\n{detalle}\n```"
-    except requests.exceptions.Timeout:
-        return False, "❌ Timeout: eBay no respondió a tiempo. Intenta de nuevo."
-    except requests.exceptions.ConnectionError:
-        return False, "❌ Sin conexión de red hacia eBay."
-    except Exception as e:
-        return False, f"❌ Error inesperado: {str(e)}"
+            return (True, mensaje_exito)
+        except requests.exceptions.HTTPError as e:
+            if intento_global >= max_reintentos_globales - 1:
+                return False, f"❌ Error HTTP {e.response.status_code} tras varios intentos:\n{e.response.text[:300]}"
+            intento_global += 1
+            st.warning(f"⚠️ Error eBay. Reintentando flujo completo con SKU nuevo ({intento_global}/{max_reintentos_globales})...")
+        except Exception as e:
+            if intento_global >= max_reintentos_globales - 1:
+                return False, f"❌ Error inesperado tras varios intentos: {str(e)}"
+            intento_global += 1
+            st.warning(f"⚠️ Reintentando flujo global por error: {str(e)[:100]}")
+    
+    return False, "❌ No se pudo publicar tras agotar todos los reintentos y estrategias de recuperación."
 # ─────────────────────────────────────────────────────────
 # UI
 # ─────────────────────────────────────────────────────────
