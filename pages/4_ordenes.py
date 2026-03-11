@@ -63,35 +63,26 @@ def main() -> None:
         with st.container(border=True):
             col_img, col_info, col_addr = st.columns([1, 2, 2])
             
-            # --- Columna 1: Imagen ---
-            item_id = "N/A"
             line_items = order.get("lineItems", [])
-            img_url = ""
+            line_item = line_items[0] if line_items else {}
+            item_id = line_item.get("legacyItemId", "N/A")
             
-            if line_items:
-                item_id = line_items[0].get("legacyItemId", "N/A")
-                img_url = line_items[0].get("image", {}).get("imageUrl", "")
-            
+            # --- Columna 1: Imagen ---
             with col_img:
-                if img_url:
-                    st.image(img_url, use_container_width=True)
-                elif item_id != "N/A":
-                    # Fallback URL
-                    st.image(f"https://i.ebayimg.com/images/i/{item_id}-0-1/s-l300/p.jpg", use_container_width=True)
-                else:
-                    st.image("https://via.placeholder.com/300?text=No+Image", use_container_width=True)
+                img_url = line_item.get("image", {}).get("imageUrl", "https://via.placeholder.com/150")
+                st.image(img_url, use_container_width=True)
 
             # --- Columna 2: Info y Enlace ---
-                line_item = line_items[0] if line_items else {}
+            with col_info:
                 titulo = line_item.get("title", "Producto sin título")
                 total_cobrado = order.get("pricingSummary", {}).get("total", {}).get("value", "0.00")
-                payout_neto = order.get("true_payout", "0.00")
+                payout_neto = order.get("paymentSummary", {}).get("totalDueSeller", {}).get("value", "0.00")
                 status_pago = order.get("paymentSummary", {}).get("payments", [{}])[0].get("paymentStatus", "N/A")
-                buyer_user = order.get("buyer", {}).get("username", "Desconocido")
+                buyer_user = order.get("buyer", {}).get("username", "")
                 
                 st.markdown(f"**{titulo}**")
                 st.markdown(f"💰 **Total Cobrado:** USD {total_cobrado}")
-                st.markdown(f"🏦 **Payout Real:** :green[USD {payout_neto}] *(Después de Ad Fees)*")
+                st.markdown(f"🏦 **Neto a Recibir (Payout):** :green[USD {payout_neto}]")
                 st.markdown(f"💳 **Estado Pago:** `{status_pago}`")
                 
                 c1, c2 = st.columns(2)
@@ -100,7 +91,7 @@ def main() -> None:
                     amazon_url = f"https://www.amazon.com/s?k={titulo_encodeado}"
                     st.link_button("🛒 Buscar en Amazon", url=amazon_url, use_container_width=True)
                 with c2:
-                    contact_url = f"https://www.ebay.com/cnt/interact?requested={buyer_user}&itemid={item_id}"
+                    contact_url = f"https://contact.ebay.com/ws/eBayISAPI.dll?ContactUserNextGen&recipient={buyer_user}&item={item_id}"
                     st.link_button("📧 Contactar Comprador", url=contact_url, use_container_width=True)
 
             # --- Columna 3: Dirección de Envío ---
@@ -122,40 +113,23 @@ def main() -> None:
                 st.code(address_text, language="text")
                 
                 # --- Gestión de Envío ---
-                col_ship, col_msg = st.columns(2)
-                
-                with col_ship:
-                    with st.expander("🚚 Gestionar Envío", expanded=False):
-                        track_key = f"track_{order.get('orderId')}"
-                        carrier_key = f"carrier_{order.get('orderId')}"
-                        
-                        tracking_number = st.text_input("Nº Seguimiento:", placeholder="Ej: TBA...", key=track_key)
-                        carrier = st.selectbox("Transportista:", ["Amazon Logistics", "USPS", "UPS", "FedEx", "DHL"], key=carrier_key)
-                        
-                        if st.button("Subir Rastreo", type="primary", key=f"btn_send_{order.get('orderId')}"):
-                            if not tracking_number.strip():
-                                st.error("Ingresa un número de rastreo.")
+                with st.expander("🚚 Gestionar Envío", expanded=False):
+                    track_key = f"track_{order.get('orderId')}"
+                    carrier_key = f"carrier_{order.get('orderId')}"
+                    
+                    tracking_number = st.text_input("Nº Seguimiento:", placeholder="Ej: TBA...", key=track_key)
+                    carrier = st.selectbox("Transportista:", ["Amazon Logistics", "USPS", "UPS", "FedEx", "DHL"], key=carrier_key)
+                    
+                    if st.button("Subir Rastreo", type="primary", key=f"btn_send_{order.get('orderId')}"):
+                        if not tracking_number.strip():
+                            st.error("Ingresa un número de rastreo.")
+                        else:
+                            with st.spinner("Subiendo..."):
+                                exito, mensaje = agente.upload_tracking(token, order.get('orderId'), tracking_number.strip(), carrier)
+                            if exito:
+                                st.success("✅ ¡Rastreo Subido!")
                             else:
-                                with st.spinner("Subiendo..."):
-                                    exito, mensaje = agente.upload_tracking(token, order.get('orderId'), tracking_number.strip(), carrier)
-                                if exito:
-                                    st.success("✅ ¡Rastreo Subido!")
-                                else:
-                                    st.error(mensaje)
-
-                with col_msg:
-                    with st.expander("📧 Mensaje al Comprador", expanded=False):
-                        msg_text = st.text_area("Mensaje:", placeholder="Ej: Gracias por tu compra...", key=f"txt_msg_{order.get('orderId')}")
-                        if st.button("Enviar Mensaje API", type="secondary", key=f"btn_msg_{order.get('orderId')}"):
-                            if not msg_text.strip():
-                                st.error("Escribe un mensaje.")
-                            else:
-                                with st.spinner("Enviando..."):
-                                    exito_msg, msg_resp = agente.send_buyer_message(token, order.get('orderId'), msg_text)
-                                if exito_msg:
-                                    st.success(f"✅ {msg_resp}")
-                                else:
-                                    st.error(msg_resp)
+                                st.error(mensaje)
 
 if __name__ == "__main__":
     main()
