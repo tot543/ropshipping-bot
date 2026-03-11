@@ -77,21 +77,58 @@ def interpretar_error_aspectos_ia(error_json: str, titulo: str = "", bullets: li
     return {}
 
 
-def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US") -> str:
+def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US") -> str:
     """
-    Usa Groq para sugerir un Category ID numérico de eBay basado en el título y marketplace.
+    Consulta la Taxonomy API de eBay para obtener sugerencias oficiales de categorías.
+    Retorna una cadena formateada con las sugerencias para pasarle a la IA.
+    """
+    try:
+        # 1. Obtener el ID del árbol de categorías para el marketplace
+        url_tree = f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}"
+        resp_tree = hacer_peticion_con_reintento("GET", url_tree, tienda_id)
+        if resp_tree.status_code != 200:
+            return ""
+        
+        tree_id = resp_tree.json().get("categoryTreeId")
+        if not tree_id:
+            return ""
+
+        # 2. Obtener sugerencias basadas en el título
+        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_suggestion?q={titulo}"
+        resp_sug = hacer_peticion_con_reintento("GET", url_sug, tienda_id)
+        
+        if resp_sug.status_code == 200:
+            suggestions = resp_sug.json().get("categorySuggestions", [])
+            output = []
+            for s in suggestions[:5]:
+                cat = s.get("category", {})
+                output.append(f"ID: {cat.get('categoryId')} | Nombre: {cat.get('categoryName')}")
+            return "\n".join(output)
+    except Exception as e:
+        print(f"DEBUG TAXONOMY | Error: {e}")
+    return ""
+
+
+def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "") -> str:
+    """
+    Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
+    y opcionalmente sugerencias oficiales de la Taxonomy API.
     """
     try:
         api_key = st.secrets["groq"]["api_key"]
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         
+        contexto_sugerencias = ""
+        if sugerencias_ebay:
+            contexto_sugerencias = f"\n\nSugerencias oficiales de eBay:\n{sugerencias_ebay}\n\nPor favor, elige la mejor de esta lista si es apropiada."
+
         sys_prompt = (
             f"Eres un experto en taxonomía de {marketplace_id}.\n"
             "Dada la descripción o título de un producto, debes devolver el CATEGORY ID (numérico) más apropiado para ese marketplace específico.\n"
             "INSTRUCCIONES:\n"
             "1) Responde ÚNICAMENTE con el número del category ID.\n"
             "2) No incluyas texto, markdown ni explicaciones.\n"
-            "3) Si no estás seguro, usa una categoría general que sepas que es válida."
+            "3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona la más lógica.{contexto_sugerencias}"
         )
         
         user_prompt = f"Título del producto: {titulo}"
@@ -107,7 +144,7 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
         resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=20)
         if resp.status_code == 200:
             res = resp.json()['choices'][0]['message']['content'].strip()
-            # Extraer solo el número por si la IA se puso habladora
+            # Extraer solo el número
             match = re.search(r"(\d+)", res)
             if match:
                 return match.group(1)
@@ -488,13 +525,15 @@ def publicar_en_ebay(
             if req_offer.status_code == 400:
                 errores = req_offer.json().get("errors", [])
                 if any(err.get("errorId") == 25005 for err in errores):
-                    with st.spinner("🧠 IA buscando una categoría alternativa fresca..."):
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id)
-                        if nueva_cat:
-                            st.warning(f"🔄 Categoría inválida. Probando con `{nueva_cat}` y nuevo SKU...")
-                            producto["category_id"] = nueva_cat
-                            intento_global += 1
-                            continue # Reiniciar todo con nuevo SKU y nueva categoría
+                    with st.spinner("🔍 Consultando Taxonomy API de eBay..."):
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        with st.spinner("🧠 IA eligiendo la mejor categoría oficial..."):
+                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias)
+                            if nueva_cat:
+                                st.warning(f"🔄 Categoría rectificada: `{nueva_cat}`. Probando con SKU fresco...")
+                                producto["category_id"] = nueva_cat
+                                intento_global += 1
+                                continue
             
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
@@ -507,15 +546,16 @@ def publicar_en_ebay(
 
             if req_publish.status_code == 400:
                 errores = req_publish.json().get("errors", [])
-                # Si falla por categoría en el publish, también reiniciamos con SKU fresco
                 if any(err.get("errorId") == 25005 for err in errores):
-                    with st.spinner("🧠 IA rectificando categoría desde el Publish..."):
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id)
-                        if nueva_cat:
-                            st.warning(f"🔄 Rectificando categoría `{nueva_cat}` y generando SKU fresco...")
-                            producto["category_id"] = nueva_cat
-                            intento_global += 1
-                            continue
+                    with st.spinner("🔍 Consultando Taxonomy API (desde Publish)..."):
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        with st.spinner("🧠 IA rectificando categoría..."):
+                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias)
+                            if nueva_cat:
+                                st.warning(f"🔄 Rectificando a `{nueva_cat}` con SKU fresco...")
+                                producto["category_id"] = nueva_cat
+                                intento_global += 1
+                                continue
             
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
@@ -547,6 +587,8 @@ def publicar_en_ebay(
                 return False, f"❌ Error inesperado tras varios intentos: {str(e)}"
             intento_global += 1
             st.warning(f"⚠️ Reintentando flujo global por error: {str(e)[:100]}")
+    
+    return False, "❌ No se pudo publicar tras agotar todos los reintentos y estrategias de recuperación."
 
 
 # ─────────────────────────────────────────────────────────
