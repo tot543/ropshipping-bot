@@ -98,7 +98,7 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     except Exception as e:
         print(f"DEBUG TAXONOMY | Error: {e}")
     return ""
-def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "") -> str:
+def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "", bullets: list = []) -> str:
     """
     Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
     y opcionalmente sugerencias oficiales de la Taxonomy API.
@@ -132,7 +132,12 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
             "7) Devuelve ÚNICAMENTE el número del Category ID. Sin explicaciones, sin texto extra."
         )
         
-        user_prompt = f"Título del producto: {titulo}"
+        bullets_str = "\n".join(f"- {b}" for b in bullets[:5]) if bullets else "No disponible"
+        user_prompt = (
+            f"Título: {titulo}\n\n"
+            f"Características del producto (Amazon):\n{bullets_str}\n\n"
+            "Basándote en el título Y las características, devuelve el Category ID más específico y correcto."
+        )
         
         payload = {
             "model": "openai/gpt-oss-120b",
@@ -493,7 +498,7 @@ def publicar_en_ebay(
                     with st.spinner("🔍 Consultando Taxonomy API de eBay..."):
                         sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
                         with st.spinner("🧠 IA eligiendo la mejor categoría oficial..."):
-                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias)
+                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, bullets=bullets)
                             if nueva_cat:
                                 st.warning(f"🔄 Categoría rectificada: `{nueva_cat}`. Probando con SKU fresco...")
                                 producto["category_id"] = nueva_cat
@@ -516,7 +521,7 @@ def publicar_en_ebay(
                             "EXCLUYE: Vehículos, Motocicletas, Botes, Maquinaria pesada, Real Estate, Tickets, "
                             "Artículos de gran tamaño (más de 150 lbs), y cualquier categoría que no permita shipping."
                         )
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra)
+                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra, bullets=bullets)
                         if nueva_cat and nueva_cat != str(producto["category_id"]):
                             st.warning(f"🔄 Categoría corregida (Local Pickup → Postal): `{nueva_cat}`")
                             producto["category_id"] = nueva_cat
@@ -539,7 +544,7 @@ def publicar_en_ebay(
                     with st.spinner("🔍 Consultando Taxonomy API (desde Publish)..."):
                         sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
                         with st.spinner("🧠 IA rectificando categoría..."):
-                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias)
+                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, bullets=bullets)
                             if nueva_cat:
                                 st.warning(f"🔄 Rectificando a `{nueva_cat}` con SKU fresco...")
                                 producto["category_id"] = nueva_cat
@@ -562,7 +567,7 @@ def publicar_en_ebay(
                             "EXCLUYE: Vehículos, Motocicletas, Botes, Maquinaria pesada, Real Estate, Tickets, "
                             "Artículos de gran tamaño (más de 150 lbs), y cualquier categoría que no permita shipping."
                         )
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra)
+                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra, bullets=bullets)
                         if nueva_cat and nueva_cat != str(producto["category_id"]):
                             st.warning(f"🔄 Categoría corregida (Local Pickup → Postal): `{nueva_cat}`")
                             producto["category_id"] = nueva_cat
