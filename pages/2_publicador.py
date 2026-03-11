@@ -110,12 +110,14 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
         contexto_sugerencias = ""
         if sugerencias_ebay:
             contexto_sugerencias = f"\n\nSugerencias oficiales de eBay:\n{sugerencias_ebay}\n\nPor favor, elige la mejor de esta lista si es apropiada."
-        sys_prompt = (
-            f"Eres un experto en taxonomía de {marketplace_id}.\n"
-            "Dada la descripción o título de un producto, debes devolver el CATEGORY ID (numérico) más apropiado para ese marketplace específico.\n"
-            f"3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona la más lógica.{contexto_sugerencias}\n"
-            "4) PRIORIZA categorías que permitan envío postal (shipping). Evita 'Local Pickup Only' si existe una alternativa de envío.\n"
-            f"{extra_prompt}"
+            f"{extra_prompt}\n"
+            "5) NUNCA elijas estas categorías: Vehículos (Cars & Trucks), Motocicletas, "
+            "Botes, Maquinaria agrícola/industrial pesada, Real Estate, Tickets & Experiences, "
+            "ni ninguna categoría que eBay marque como 'Local Pickup Only'.\n"
+            "6) Para productos de consumo general, prioriza siempre categorías de: "
+            "Consumer Electronics, Clothing, Home & Garden, Sporting Goods, Toys & Hobbies, "
+            "Health & Beauty, o la más específica disponible con envío postal.\n"
+            "7) Devuelve SOLO el número del Category ID, sin texto adicional."
 )
         
         user_prompt = f"Título del producto: {titulo}"
@@ -181,7 +183,7 @@ def hacer_peticion_con_reintento(
     # 2. Log de depuración para errores críticos
     if respuesta.status_code >= 400:
         print(f"DEBUG EBAY API | {metodo} {url} | Status: {respuesta.status_code}")
-        print(f"DEBUG EBAY API | Response: {respuesta.text[:500]}")
+        print(f"DEBUG EBAY API | Response: {respuesta.text}")
     return respuesta
 @st.cache_data(show_spinner=False, ttl=3600)
 def obtener_politicas_ebay(tienda_id: str, tipo: str, marketplace_id: str = "EBAY_US") -> dict:
@@ -331,10 +333,6 @@ def construir_payload_oferta(
                 "currency": "USD",
                 "value":    str(round(precio_sugerido, 2))
             }
-        },
-        "tax": {
-            "applyTax":               True,
-            "thirdPartyTaxCategory":  "Electronics"
         },
     }
 # ─────────────────────────────────────────────────────────
@@ -494,6 +492,24 @@ def publicar_en_ebay(
                     cantidad = 1
                     intento_global += 1
                     continue
+                # CAMBIO 1 — Manejar errorId 25008 en Paso B (CreateOffer)
+                if any(err.get("errorId") == 25008 for err in errores):
+                    with st.spinner("🔍 Categoría fuerza Local Pickup. Buscando alternativa postal..."):
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        extra = (
+                            "CRÍTICO: La categoría anterior obliga a 'Local Pickup Only'. "
+                            "DEBES elegir una categoría que permita envío postal estándar (USPS, FedEx, UPS). "
+                            "EXCLUYE: Vehículos, Motocicletas, Botes, Maquinaria pesada, Real Estate, Tickets, "
+                            "Artículos de gran tamaño (más de 150 lbs), y cualquier categoría que no permita shipping."
+                        )
+                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra)
+                        if nueva_cat and nueva_cat != str(producto["category_id"]):
+                            st.warning(f"🔄 Categoría corregida (Local Pickup → Postal): `{nueva_cat}`")
+                            producto["category_id"] = nueva_cat
+                            intento_global += 1
+                            continue
+                        else:
+                            return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
             
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
@@ -522,6 +538,24 @@ def publicar_en_ebay(
                     cantidad = 1
                     intento_global += 1
                     continue
+                # CAMBIO 2 — Mismo manejo en Paso C (PublishOffer)
+                if any(err.get("errorId") == 25008 for err in errores):
+                    with st.spinner("🔍 Categoría fuerza Local Pickup. Buscando alternativa postal..."):
+                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
+                        extra = (
+                            "CRÍTICO: La categoría anterior obliga a 'Local Pickup Only'. "
+                            "DEBES elegir una categoría que permita envío postal estándar (USPS, FedEx, UPS). "
+                            "EXCLUYE: Vehículos, Motocicletas, Botes, Maquinaria pesada, Real Estate, Tickets, "
+                            "Artículos de gran tamaño (más de 150 lbs), y cualquier categoría que no permita shipping."
+                        )
+                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra)
+                        if nueva_cat and nueva_cat != str(producto["category_id"]):
+                            st.warning(f"🔄 Categoría corregida (Local Pickup → Postal): `{nueva_cat}`")
+                            producto["category_id"] = nueva_cat
+                            intento_global += 1
+                            continue
+                        else:
+                            return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
             
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
@@ -542,7 +576,7 @@ def publicar_en_ebay(
             return (True, mensaje_exito)
         except requests.exceptions.HTTPError as e:
             if intento_global >= max_reintentos_globales - 1:
-                return False, f"❌ Error HTTP {e.response.status_code} tras varios intentos:\n{e.response.text[:300]}"
+                return False, f"❌ Error HTTP {e.response.status_code} tras varios intentos:\n{e.response.text}"
             intento_global += 1
             st.warning(f"⚠️ Error eBay. Reintentando flujo completo con SKU nuevo ({intento_global}/{max_reintentos_globales})...")
         except Exception as e:
