@@ -86,6 +86,26 @@ class EbayOrdersAgent:
             st.error(f"DEBUG Error eBay: {str(e)} - Respuesta de eBay: {resp.text if 'resp' in locals() else 'No response'}")
             return []
 
+    def get_orders_response(self, token: str, limit: int = 10) -> dict:
+        """
+        Obtiene la respuesta completa de la API de Fulfillment sin procesar.
+        """
+        if not token:
+            return {}
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+
+        try:
+            resp = requests.get(f"{self.base_url}?limit={limit}", headers=headers, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            st.error(f"Error cargando órdenes: {e}")
+            return {}
+
     def upload_tracking(self, token: str, order_id: str, tracking_number: str, carrier: str) -> tuple[bool, str]:
         """
         Sube el número de rastreo a eBay para una orden específica usando la API de Fulfillment.
