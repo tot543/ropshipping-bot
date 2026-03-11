@@ -30,12 +30,16 @@ EBAY_MARKETING_BASE_URL  = "https://api.ebay.com/sell/marketing/v1"
 # HELPERS HTTP
 # ─────────────────────────────────────────────────────────
 
-def construir_headers_ebay(token: str) -> dict:
+def construir_headers_ebay(token: str, marketplace_id: str = "EBAY_US") -> dict:
+    """
+    Retorna las cabeceras requeridas para la API de eBay.
+    """
     return {
-        "Authorization":    f"Bearer {token}",
-        "Content-Type":     "application/json",
-        "Content-Language": "en-US",
-        "Accept":           "application/json",
+        "Authorization":           f"Bearer {token}",
+        "Content-Type":            "application/json",
+        "Content-Language":        "en-US",
+        "Accept":                  "application/json",
+        "X-EBAY-C-MARKETPLACE-ID": marketplace_id
     }
 
 
@@ -48,8 +52,12 @@ def hacer_peticion_con_reintento(
     """
     Wrapper HTTP con auto-renovación OAuth en errores 401.
     """
+    # Recuperar marketplace_id para las cabeceras
+    config_tienda = st.session_state.get("config_tienda", {})
+    marketplace_id = config_tienda.get("site_id", "EBAY_US")
+
     token = get_valid_token(tienda_id)
-    headers = construir_headers_ebay(token)
+    headers = construir_headers_ebay(token, marketplace_id)
 
     kwargs = {"url": url, "headers": headers, "timeout": 20}
     if payload is not None:
@@ -57,11 +65,17 @@ def hacer_peticion_con_reintento(
 
     respuesta = requests.request(metodo, **kwargs)
 
+    # 1. Manejo de renovación de token (401)
     if respuesta.status_code == 401:
         st.warning("🔄 Token expirado. Auto-renovando...")
         nuevo_token = refresh_access_token(tienda_id)
-        kwargs["headers"] = construir_headers_ebay(nuevo_token)
+        kwargs["headers"] = construir_headers_ebay(nuevo_token, marketplace_id)
         respuesta = requests.request(metodo, **kwargs)
+
+    # 2. Log de depuración para errores críticos
+    if respuesta.status_code >= 400:
+        print(f"DEBUG EBAY API | {metodo} {url} | Status: {respuesta.status_code}")
+        print(f"DEBUG EBAY API | Response: {respuesta.text[:500]}")
 
     return respuesta
 
@@ -129,9 +143,9 @@ def obtener_ubicaciones_ebay(tienda_id: str) -> dict:
 
 def crear_ubicacion_default(tienda_id: str) -> bool:
     """
-    Crea una ubicación por defecto (USA Warehouse) para cuentas nuevas.
+    Crea una ubicación por defecto (USA Warehouse) con máxima transparencia.
     """
-    location_key = "DEFAULT_WAREHOUSE_US"
+    location_key = "ALMACEN_USA_1"
     url = f"{EBAY_INVENTORY_BASE_URL}/location/{location_key}"
     
     payload = {
@@ -144,19 +158,26 @@ def crear_ubicacion_default(tienda_id: str) -> bool:
                 "country": "US"
             }
         },
-        "locationWebUrl": "https://www.ebay.com",
         "name": "Almacén Principal USA",
         "merchantLocationStatus": "ENABLED",
         "locationTypes": ["WAREHOUSE"]
     }
     
+    st.info(f"📡 Intentando crear ubicación en: `{url}`")
+    
     resp = hacer_peticion_con_reintento("POST", url, tienda_id, payload)
     
     if resp.status_code in (200, 201, 204):
+        st.success(f"✅ ¡Éxito! Ubicación '{location_key}' creada.")
         st.cache_data.clear() # Limpiar cache para que aparezca la nueva ubicación
         return True
     else:
-        st.error(f"Error creando ubicación: {resp.text}")
+        st.error(f"❌ Error {resp.status_code} al crear ubicación.")
+        with st.expander("🔍 Ver Detalles Técnicos para Soporte"):
+            st.write(f"**URL intentada:** `{url}`")
+            st.write(f"**Headers enviados:** `{resp.request.headers}`")
+            st.write(f"**Cuerpo de respuesta:**")
+            st.code(resp.text, language="json")
         return False
 
 
@@ -387,9 +408,8 @@ def publicar_en_ebay(
                             aspectos_inyectados = []
                             for err in errores_25002:
                                 mensaje = err.get("message", "")
-                                # Extraer lo que está entre "The item specific" y "is missing"
-                                # Ejemplo: "The item specific Department is missing. Add Department..."
-                                match = re.search(r'The item specific(.*?)(?:is missing|was not found)', mensaje, re.IGNORECASE)
+                                # Regex más robusta: captura lo que está entre "specific" y "is missing", "was not found" o "is required"
+                                match = re.search(r'specific\s+["\']?(.*?)["\']?\s+(?:is missing|was not found|is required)', mensaje, re.IGNORECASE)
                                 if match:
                                     aspecto_faltante = match.group(1).strip()
                                     aspectos_dict[aspecto_faltante] = ["Does not apply"]
@@ -399,6 +419,8 @@ def publicar_en_ebay(
                                 st.info(f"🛠️ eBay exige: {', '.join(aspectos_inyectados)}. Inyectando automáticamente...")
                                 intento += 1
                                 continue
+                            else:
+                                st.warning(f"⚠️ eBay pide aspectos pero no pude identificar cuáles: {mensaje}")
                     except Exception as ex:
                         st.warning(f"Error parseando auto-healing: {str(ex)}")
                 raise e
@@ -461,12 +483,21 @@ def publicar_en_ebay(
                                 st.info(f"✅ Inventory Item parcheado con: {', '.join(aspectos_inyectados)}")
                             else:
                                 st.error(f"❌ No se pudo parchear el Inventory Item: {req_fix.text[:200]}")
+                                with st.expander("🔍 Detalles del fallo al parchear aspectos"):
+                                    st.code(req_fix.text, language="json")
                                 req_publish.raise_for_status()
                             continue
+                        else:
+                            st.error("❌ Faltan aspectos pero no se pudieron auto-detectar.")
                 except Exception as ex:
                     st.warning(f"Error parseando auto-healing en Paso C: {str(ex)}")
-
-            # Si llegamos aquí sin haber hecho continue, es un error no-recuperable
+            
+            # Si falló y no hubo auto-healing exitoso
+            st.error(f"❌ Error {req_publish.status_code} al publicar oferta.")
+            with st.expander("🔍 Ver Detalles Técnicos (Paso C)"):
+                st.write(f"**URL:** `{url_publish}`")
+                st.write(f"**Respuesta de eBay:**")
+                st.code(req_publish.text, language="json")
             req_publish.raise_for_status()
 
         if listing_id is None:
