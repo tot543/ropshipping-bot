@@ -3,6 +3,7 @@ import os
 import time
 import pandas as pd
 import streamlit as st
+import urllib.parse
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.ebay_auth import get_valid_token, refresh_access_token
@@ -49,68 +50,83 @@ def main() -> None:
     agente = EbayOrdersAgent()
 
     with st.spinner("Conectando con eBay Fulfillment API..."):
-        ordenes = agente.get_recent_orders(token, limit=20)
+        ordenes_data = agente.get_orders_response(token, limit=20)
 
-    if not ordenes:
-        st.warning("⚠️ La API de eBay no devolvió órdenes recientes o está temporalmente inactiva. Intenta más tarde.")
+    orders_list = ordenes_data.get("orders", [])
+    if not orders_list:
+        st.warning("⚠️ No se encontraron órdenes recientes.")
         st.stop()
-        
-    # Procesar URLs de origen basadas en SKU
-    for orden in ordenes:
-        sku = orden.get("SKU", "")
-        if sku.startswith("DS-"):
-            asin = sku.replace("DS-", "")
-            orden["Link de Origen"] = f"https://amazon.com/dp/{asin}"
-        else:
-            orden["Link de Origen"] = None
 
-    df = pd.DataFrame(ordenes)
-    
-    st.markdown("### 📋 Órdenes Pendientes")
-    
-    evento = st.dataframe(
-        df, 
-        use_container_width=True, 
-        hide_index=True,
-        on_select="rerun", 
-        selection_mode="single-row"
-    )
+    st.markdown(f"### 📋 Órdenes Pendientes ({len(orders_list)})")
 
-    if len(evento.selection.rows) > 0:
-        fila_seleccionada = evento.selection.rows[0]
-        orden_seleccionada = df.iloc[fila_seleccionada]
-        order_id = orden_seleccionada.get("Order ID", "")
-        comprador = orden_seleccionada.get("Comprador", "")
-        link_extraido = orden_seleccionada.get("Link de Origen")
-        
-        st.divider()
-        
-        if link_extraido:
-            st.link_button("🛒 Comprar en Amazon", url=link_extraido)
+    for order in orders_list:
+        with st.container(border=True):
+            col_img, col_info, col_addr = st.columns([1, 2, 2])
             
-        st.subheader(f"🚚 Formulario de Despacho MANUAL")
-        st.markdown(f"**Orden Seleccionada:** `{order_id}` (Comprador: {comprador})")
-        
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            tracking_number = st.text_input("Número de Rastreo (Tracking Number):", placeholder="Ej: TBA123456789012")
-        with col2:
-            carrier = st.selectbox("Transportista (Carrier):", ["Amazon Logistics", "USPS", "UPS", "FedEx", "DHL"])
-
-        if st.button("Subir Rastreo a eBay", type="primary"):
-            if not tracking_number.strip():
-                st.error("Por favor, ingresa un número de rastreo válido.")
-            else:
-                with st.spinner(f"Subiendo tracking {tracking_number} a eBay..."):
-                    exito, mensaje = agente.upload_tracking(token, order_id, tracking_number.strip(), carrier)
-                
-                if exito:
-                    st.success(mensaje)
+            # --- Columna 1: Imagen ---
+            item_id = "N/A"
+            line_items = order.get("lineItems", [])
+            if line_items:
+                item_id = line_items[0].get("legacyItemId", "N/A")
+            
+            with col_img:
+                if item_id != "N/A":
+                    img_url = f"https://i.ebayimg.com/images/i/{item_id}-0-1/s-l300/p.jpg"
+                    st.image(img_url, use_container_width=True)
                 else:
-                    st.error(mensaje)
-    else:
-        st.info("👆 Selecciona una orden de la tabla para abrir el panel de Subida de Rastreo.")
+                    st.image("https://via.placeholder.com/300?text=No+Image", use_container_width=True)
+
+            # --- Columna 2: Info y Enlace ---
+            with col_info:
+                titulo = line_items[0].get("title", "Producto sin título") if line_items else "Sin productos"
+                total_pagado = order.get("pricingSummary", {}).get("total", {}).get("value", "0.00")
+                status_pago = order.get("paymentSummary", {}).get("payments", [{}])[0].get("paymentStatus", "N/A")
+                
+                st.markdown(f"**{titulo}**")
+                st.markdown(f"💰 **Total:** USD {total_pagado}")
+                st.markdown(f"💳 **Estado:** `{status_pago}`")
+                st.markdown(f"🆔 **Item ID:** `{item_id}`")
+                
+                titulo_encodeado = urllib.parse.quote(titulo)
+                amazon_url = f"https://www.amazon.com/s?k={titulo_encodeado}"
+                st.link_button("🛒 Buscar en Amazon", url=amazon_url)
+
+            # --- Columna 3: Dirección de Envío ---
+            with col_addr:
+                shipping_step = order.get("fulfillmentStartInstructions", [{}])[0].get("shippingStep", {})
+                ship_to = shipping_step.get("shipTo", {})
+                addr = ship_to.get("contactAddress", {})
+                
+                full_name = ship_to.get("fullName", "Comprador Desconocido")
+                line1 = addr.get("addressLine1", "")
+                line2 = addr.get("addressLine2", "")
+                city = addr.get("city", "")
+                state = addr.get("stateOrProvince", "")
+                zip_code = addr.get("postalCode", "")
+                
+                address_text = f"{full_name}\n{line1}\n{line2}\n{city}, {state} {zip_code}".replace("\n\n", "\n").strip()
+                
+                st.markdown("**📍 Dirección de Envío:**")
+                st.code(address_text, language="text")
+                
+                # --- Gestión de Envío ---
+                with st.expander("🚚 Gestionar Envío", expanded=False):
+                    track_key = f"track_{order.get('orderId')}"
+                    carrier_key = f"carrier_{order.get('orderId')}"
+                    
+                    tracking_number = st.text_input("Nº Seguimiento:", placeholder="Ej: TBA...", key=track_key)
+                    carrier = st.selectbox("Transportista:", ["Amazon Logistics", "USPS", "UPS", "FedEx", "DHL"], key=carrier_key)
+                    
+                    if st.button("Subir Rastreo", type="primary", key=f"btn_send_{order.get('orderId')}"):
+                        if not tracking_number.strip():
+                            st.error("Ingresa un número de rastreo.")
+                        else:
+                            with st.spinner("Subiendo..."):
+                                exito, mensaje = agente.upload_tracking(token, order.get('orderId'), tracking_number.strip(), carrier)
+                            if exito:
+                                st.success("✅ ¡Rastreo Subido!")
+                            else:
+                                st.error(mensaje)
 
 if __name__ == "__main__":
     main()
