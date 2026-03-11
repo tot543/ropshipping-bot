@@ -12,8 +12,7 @@ class EbayOrdersAgent:
 
     def get_recent_orders(self, token: str, limit: int = 10) -> list[dict]:
         """
-        Obtiene las órdenes más recientes.
-        Siempre retorna una lista segura de diccionarios con las llaves procesadas.
+        Obtiene las órdenes que están pendientes de envío.
         """
         if not token:
             return []
@@ -25,8 +24,9 @@ class EbayOrdersAgent:
         }
 
         try:
-            resp = requests.get(f"{self.base_url}?limit={limit}", headers=headers, timeout=10)
-            
+            # Filtramos por las órdenes que NO han sido enviadas aún (Awaiting Shipment)
+            url = f"{self.base_url}?limit={limit}&filter=orderfulfillmentstatus:{{NOT_STARTED|IN_PROGRESS}}"
+            resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
 
             datos = resp.json()
@@ -82,13 +82,12 @@ class EbayOrdersAgent:
             return ordenes_procesadas
 
         except Exception as e:
-            # Mostramos el error exacto para depuración
             st.error(f"DEBUG Error eBay: {str(e)} - Respuesta de eBay: {resp.text if 'resp' in locals() else 'No response'}")
             return []
 
     def get_orders_response(self, token: str, limit: int = 10) -> dict:
         """
-        Obtiene la respuesta completa de la API de Fulfillment sin procesar.
+        Obtiene la respuesta completa de la API de Fulfillment filtrando por pendientes de envío.
         """
         if not token:
             return {}
@@ -99,7 +98,8 @@ class EbayOrdersAgent:
         }
 
         try:
-            resp = requests.get(f"{self.base_url}?limit={limit}", headers=headers, timeout=10)
+            url = f"{self.base_url}?limit={limit}&filter=orderfulfillmentstatus:{{NOT_STARTED|IN_PROGRESS}}"
+            resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
