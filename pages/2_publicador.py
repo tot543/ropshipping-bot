@@ -356,9 +356,6 @@ def publicar_en_ebay(
     sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
 
     try:
-        import importlib
-        import skills.groq_agent
-        importlib.reload(skills.groq_agent)
         from skills.groq_agent import GroqAssistant
         agente_groq = GroqAssistant()
         
