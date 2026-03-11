@@ -98,7 +98,7 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     except Exception as e:
         print(f"DEBUG TAXONOMY | Error: {e}")
     return ""
-def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "") -> str:
+def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "") -> str:
     """
     Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
     y opcionalmente sugerencias oficiales de la Taxonomy API.
@@ -113,11 +113,10 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
         sys_prompt = (
             f"Eres un experto en taxonomía de {marketplace_id}.\n"
             "Dada la descripción o título de un producto, debes devolver el CATEGORY ID (numérico) más apropiado para ese marketplace específico.\n"
-            "INSTRUCCIONES:\n"
-            "1) Responde ÚNICAMENTE con el número del category ID.\n"
-            "2) No incluyas texto, markdown ni explicaciones.\n"
-            "3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona la más lógica.{contexto_sugerencias}"
-        )
+            f"3) Si te proporciono sugerencias oficiales de eBay, analízalas y selecciona la más lógica.{contexto_sugerencias}\n"
+            "4) PRIORIZA categorías que permitan envío postal (shipping). Evita 'Local Pickup Only' si existe una alternativa de envío.\n"
+            f"{extra_prompt}"
+)
         
         user_prompt = f"Título del producto: {titulo}"
         
@@ -157,14 +156,16 @@ def hacer_peticion_con_reintento(
     metodo: str,
     url: str,
     tienda_id: str,
-    payload: dict | None = None
+    payload: dict | None = None,
+    marketplace_id: str | None = None
 ) -> requests.Response:
     """
     Wrapper HTTP con auto-renovación OAuth en errores 401.
     """
-    # Recuperar marketplace_id para las cabeceras
-    config_tienda = st.session_state.get("config_tienda", {})
-    marketplace_id = config_tienda.get("site_id", "EBAY_US")
+    if marketplace_id is None:
+        # Recuperar marketplace_id default si no se provee
+        config_tienda = st.session_state.get("config_tienda", {})
+        marketplace_id = config_tienda.get("site_id", "EBAY_US")
     token = get_valid_token(tienda_id)
     headers = construir_headers_ebay(token, marketplace_id)
     kwargs = {"url": url, "headers": headers, "timeout": 20}
@@ -183,13 +184,13 @@ def hacer_peticion_con_reintento(
         print(f"DEBUG EBAY API | Response: {respuesta.text[:500]}")
     return respuesta
 @st.cache_data(show_spinner=False, ttl=3600)
-def obtener_politicas_ebay(tienda_id: str, tipo: str) -> dict:
+def obtener_politicas_ebay(tienda_id: str, tipo: str, marketplace_id: str = "EBAY_US") -> dict:
     """
     Obtiene las políticas reales de la cuenta de eBay (fulfillment, payment, return).
-    Cacheado por 1 hora por tipo y tienda para no saturar la API.
+    Cacheado por 1 hora por tipo, tienda y marketplace.
     Retorna: dict { "Nombre Política": "ID_Politica" }
     """
-    url = f"{EBAY_ACCOUNT_BASE_URL}/{tipo}_policy?marketplace_id=EBAY_US"
+    url = f"{EBAY_ACCOUNT_BASE_URL}/{tipo}_policy?marketplace_id={marketplace_id}"
     # Llamamos a nuestro wrapper que maneja OAuth y reintentos automáticos
     req = hacer_peticion_con_reintento("GET", url, tienda_id)
     
@@ -302,26 +303,27 @@ def construir_payload_oferta(
     producto: dict, 
     sku: str, 
     config_tienda: dict,
-    pol_fulfillment_id: str,
-    pol_payment_id: str,
-    pol_return_id: str,
+    id_envio: str,
+    id_pago: str,
+    id_devol: str,
     merchant_location_key: str,
     descripcion_html: str,
-    cantidad: int = 2
+    cantidad: int = 2,
+    marketplace_id: str = "EBAY_US"
 ) -> dict:
     """Paso B — CreateOffer: vincula el inventario a la tienda con precio, políticas y ubicación dinámicas."""
     precio_sugerido = float(producto.get("precio_sugerido", producto["precio_ebay"]))
     return {
         "sku":               sku,
-        "marketplaceId":     config_tienda.get("site_id", "EBAY_US"),
+        "marketplaceId":     marketplace_id,
         "format":            "FIXED_PRICE",
         "availableQuantity": cantidad,
         "categoryId":        str(producto["category_id"]),
         "listingDescription": descripcion_html,
         "listingPolicies": {
-            "fulfillmentPolicyId": pol_fulfillment_id,
-            "paymentPolicyId":     pol_payment_id,
-            "returnPolicyId":      pol_return_id,
+            "fulfillmentPolicyId": id_envio,
+            "paymentPolicyId":     id_pago,
+            "returnPolicyId":      id_devol,
         },
         "merchantLocationKey": merchant_location_key,
         "pricingSummary": {
@@ -431,7 +433,8 @@ def publicar_en_ebay(
 ) -> tuple[bool, str]:
     max_reintentos_globales = 3
     intento_global = 0
-    marketplace_id = config_tienda.get("site_id", "EBAY_US")
+    # Prioridad al marketplace detectado por el Cazador
+    marketplace_id = producto.get("marketplace_id") or config_tienda.get("site_id", "EBAY_US")
     while intento_global < max_reintentos_globales:
         sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
         try:
@@ -455,22 +458,25 @@ def publicar_en_ebay(
             payload_item = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
             
             st.markdown(f"**Paso A (Intento {intento_global+1})** — `PUT {url_item}`")
-            req_item = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item)
+            req_item = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item, marketplace_id=marketplace_id)
             req_item.raise_for_status()
             st.success(f"✅ Inventory Item creado — SKU: `{sku}`")
             # ── Paso B: CreateOffer ──
             url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
             payload_oferta = construir_payload_oferta(
                 producto, sku, config_tienda, 
-                pol_fulfillment_id, pol_payment_id, pol_return_id, merchant_location_key,
-                descripcion_html_generada, cantidad
+                id_envio, id_pago, id_devol, 
+                merchant_location_key,
+                descripcion_html_generada, cantidad,
+                marketplace_id=marketplace_id
             )
             
             st.markdown(f"**Paso B** — `POST {url_offer}`")
-            req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta)
+            req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta, marketplace_id=marketplace_id)
             
             if req_offer.status_code == 400:
                 errores = req_offer.json().get("errors", [])
+                # 1. Error de Categoría (25005)
                 if any(err.get("errorId") == 25005 for err in errores):
                     with st.spinner("🔍 Consultando Taxonomy API de eBay..."):
                         sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
@@ -481,6 +487,13 @@ def publicar_en_ebay(
                                 producto["category_id"] = nueva_cat
                                 intento_global += 1
                                 continue
+                
+                # 2. Error de Cantidad (25006)
+                if any(err.get("errorId") == 25006 for err in errores):
+                    st.warning("⚠️ eBay solo permite cantidad de 1 en esta categoría. Ajustando stock a 1 y reintentando...")
+                    cantidad = 1
+                    intento_global += 1
+                    continue
             
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
@@ -488,9 +501,10 @@ def publicar_en_ebay(
             # ── Paso C: PublishOffer ──
             url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
             st.markdown(f"**Paso C** — `POST {url_publish}`")
-            req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {})
+            req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {}, marketplace_id=marketplace_id)
             if req_publish.status_code == 400:
                 errores = req_publish.json().get("errors", [])
+                # 1. Error de Categoría (25005)
                 if any(err.get("errorId") == 25005 for err in errores):
                     with st.spinner("🔍 Consultando Taxonomy API (desde Publish)..."):
                         sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
@@ -501,6 +515,13 @@ def publicar_en_ebay(
                                 producto["category_id"] = nueva_cat
                                 intento_global += 1
                                 continue
+                
+                # 2. Error de Cantidad (25006)
+                if any(err.get("errorId") == 25006 for err in errores):
+                    st.warning("⚠️ eBay solo permite cantidad de 1 (detectado en Publish). Ajustando stock a 1 y reintentando...")
+                    cantidad = 1
+                    intento_global += 1
+                    continue
             
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
@@ -608,10 +629,12 @@ def main() -> None:
     # ── Selector Dinámico de Políticas y Ubicaciones ────────────────
     st.subheader("⚙️ Configuración de Listado (eBay Account & Inventory API)")
     
-    with st.spinner("Cargando información de tu cuenta de eBay..."):
-        politicas_envio = obtener_politicas_ebay(tienda_id, "fulfillment")
-        politicas_pago  = obtener_politicas_ebay(tienda_id, "payment")
-        politicas_devol = obtener_politicas_ebay(tienda_id, "return")
+    current_marketplace = producto.get("marketplace_id") or cfg.get("site_id", "EBAY_US")
+    
+    with st.spinner(f"Cargando información de tu cuenta ({current_marketplace})..."):
+        politicas_envio = obtener_politicas_ebay(tienda_id, "fulfillment", current_marketplace)
+        politicas_pago  = obtener_politicas_ebay(tienda_id, "payment", current_marketplace)
+        politicas_devol = obtener_politicas_ebay(tienda_id, "return", current_marketplace)
         ubicaciones     = obtener_ubicaciones_ebay(tienda_id)
         
     if not politicas_envio or not politicas_pago or not politicas_devol:
