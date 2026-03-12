@@ -15,7 +15,6 @@ if os.getcwd() not in sys.path:
 from utils.ebay_auth import get_valid_token, refresh_access_token, get_app_token
 
 st.set_page_config(page_title="Publicador Automático | eBay Hub", page_icon="🚀", layout="wide")
-st.set_page_config(page_title="Publicador Automático | eBay Hub", page_icon="🚀", layout="wide")
 EBAY_INVENTORY_BASE_URL  = "https://api.ebay.com/sell/inventory/v1"
 EBAY_ACCOUNT_BASE_URL    = "https://api.ebay.com/sell/account/v1"
 EBAY_MARKETING_BASE_URL  = "https://api.ebay.com/sell/marketing/v1"

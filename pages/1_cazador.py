@@ -13,7 +13,6 @@ if os.getcwd() not in sys.path:
 from utils.ebay_auth import get_valid_token, refresh_access_token, get_app_token
 
 st.set_page_config(page_title="Cazador | eBay Hub", page_icon="🎯", layout="wide")
-st.set_page_config(page_title="Cazador | eBay Hub", page_icon="🎯", layout="wide")
 UMBRAL_GANANCIA_MIN = 0.01  # Umbral mínimo de aprobación
 # ─────────────────────────────────────────────────────────
 # EXTRACCIÓN eBay BROWSE API (PRODUCCIÓN)
