@@ -561,14 +561,12 @@ def publicar_en_ebay(
         st.info(f"🛒 Marketplace: {marketplace_id}")
 
 
-    categorias_intentadas = set()
     while intento_global < max_reintentos_globales:
         sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
         try:
             from skills.groq_agent import GroqAssistant
             agente_groq = GroqAssistant()
             
-            # Solo generamos descripción y aspectos en el primer intento global
             if intento_global == 0:
                 with st.spinner('🧠 Groq redactando descripción y specs...'):
                     titulo = producto['titulo']
@@ -583,14 +581,13 @@ def publicar_en_ebay(
             # ── Paso A: CreateOrReplaceInventoryItem ──
             url_item = f"{EBAY_INVENTORY_BASE_URL}/inventory_item/{sku}"
             payload_item = construir_payload_inventory_item(producto, descripcion_html_generada, aspectos_dict, cantidad)
-            
             st.markdown(f"**Paso A (Intento {intento_global+1})** — `PUT {url_item}`")
             req_item = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item, marketplace_id=marketplace_id)
             req_item.raise_for_status()
             st.success(f"✅ Inventory Item creado — SKU: `{sku}`")
+
             # ── Paso B: CreateOffer ──
             url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
-            # Ajustar marketplace según categoría
             marketplace_oferta = "EBAY_MOTORS" if es_categoria_motors(str(producto["category_id"])) else marketplace_id
             payload_oferta = construir_payload_oferta(
                 producto, sku, config_tienda, 
@@ -599,260 +596,85 @@ def publicar_en_ebay(
                 descripcion_html_generada, cantidad,
                 marketplace_id=marketplace_oferta
             )
-            
             st.markdown(f"**Paso B** — `POST {url_offer}`")
             req_offer = hacer_peticion_con_reintento("POST", url_offer, tienda_id, payload_oferta, marketplace_id=marketplace_id)
             
             if req_offer.status_code == 400:
                 errores = req_offer.json().get("errors", [])
-                # 1. Error de Categoría (25005)
-                if any(err.get("errorId") == 25005 for err in errores):
-                    st.warning("⚠️ Categoría inválida (25005). Consultando Taxonomy API...")
-                    categorias_intentadas.add(str(producto["category_id"]))
-                    
-                    # Primero: intentar con Taxonomy API directamente (más confiable)
-                    nueva_cat = obtener_categoria_hoja_taxonomy(
-                        titulo, tienda_id, marketplace_id,
-                        excluir=categorias_intentadas,
-                        bullets=bullets,
-                        descripcion=producto.get("descripcion_amazon", "")
-                    )
-                    
-                    # Segundo: si Taxonomy no devuelve nada, usar IA como fallback
-                    if not nueva_cat:
-                        st.warning("⚠️ Taxonomy API sin resultados. Usando IA como fallback...")
-                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, bullets=bullets, excluir_categorias=categorias_intentadas)
-                    
-                    if nueva_cat:
-                        st.warning(f"🔄 Categoría corregida: `{nueva_cat}`. Reintentando...")
-                        producto["category_id"] = nueva_cat
-                        intento_global += 1
-                        continue
-                    else:
-                        return False, "❌ Error 25005: No se encontró una categoría válida tras agotar todas las estrategias."
-                
-                # 2. Error de Cantidad (25006)
+                # 1. Error de Cantidad (25006)
                 if any(err.get("errorId") == 25006 for err in errores):
-                    st.warning("⚠️ eBay solo permite cantidad de 1 en esta categoría. Ajustando stock a 1 y reintentando...")
+                    st.warning("⚠️ eBay solo permite stock de 1 en esta categoría. Ajustando...")
                     cantidad = 1
                     intento_global += 1
                     continue
-                # CAMBIO 1 — Manejar errorId 25008 en Paso B (CreateOffer)
-                if any(err.get("errorId") == 25008 for err in errores):
-                    with st.spinner("🔍 Categoría fuerza Local Pickup. Buscando alternativa postal..."):
-                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        extra = (
-                            "CRÍTICO: La categoría anterior obliga a 'Local Pickup Only'. "
-                            "DEBES elegir una categoría que permita envío postal estándar (USPS, FedEx, UPS). "
-                            "EXCLUYE: Vehículos, Motocicletas, Botes, Maquinaria pesada, Real Estate, Tickets, "
-                            "Artículos de gran tamaño (más de 150 lbs), y cualquier categoría que no permita shipping."
-                        )
-                        categorias_intentadas.add(str(producto["category_id"]))
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra, bullets=bullets, excluir_categorias=categorias_intentadas)
-                        if nueva_cat and nueva_cat != str(producto["category_id"]):
-                            st.warning(f"🔄 Categoría corregida (Local Pickup → Postal): `{nueva_cat}`")
-                            producto["category_id"] = nueva_cat
-                            intento_global += 1
-                            continue
-                        else:
-                            return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
-                # LUGAR 1 — Mano de error 25002 en Paso B (CreateOffer)
+                # 2. Error de Especificaciones (25002)
                 if any(err.get("errorId") == 25002 for err in errores):
-                    error_json_str = json.dumps(req_offer.json())
-                    ASPECTOS_ROPA = {"sleeve length", "size type", "size", "department", 
-                                     "style", "pattern", "fabric type", "gender", "age group",
-                                     "neckline", "fit", "occasion", "season", "theme"}
-                    aspectos_requeridos = set()
-                    for err in errores:
-                        if err.get("errorId") == 25002:
-                            params = err.get("parameters", [])
-                            for p in params:
-                                if p.get("name") == "2":
-                                    aspectos_requeridos.add(p.get("value", "").lower())
-                    
-                    es_categoria_ropa = bool(aspectos_requeridos & ASPECTOS_ROPA)
-                    
-                    if es_categoria_ropa:
-                        st.warning("⚠️ eBay detectó categoría de ropa para un producto que no es ropa. Cambiando categoría...")
-                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        extra = (
-                            "CRÍTICO: La categoría asignada es de ROPA pero el producto NO es ropa. "
-                            "eBay está pidiendo 'Sleeve Length', 'Size Type' u otros aspectos de vestimenta. "
-                            "DEBES elegir la categoría correcta para este producto ignorando completamente "
-                            "las categorías de Clothing, Shoes, Accessories, Apparel o Fashion."
-                        )
-                        categorias_intentadas.add(str(producto["category_id"]))
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra, bullets=bullets, excluir_categorias=categorias_intentadas)
-                        if nueva_cat and nueva_cat != str(producto["category_id"]):
-                            st.warning(f"🔄 Categoría corregida (Ropa → Correcta): `{nueva_cat}`")
-                            producto["category_id"] = nueva_cat
-                            intento_global += 1
-                            continue
-                        else:
-                            return False, "❌ Error 25002: No se pudo asignar una categoría correcta para este producto."
-                    else:
-                        st.warning("⚠️ eBay requiere más especificaciones. Corrigiendo con IA...")
-                        nuevos_aspectos = interpretar_error_aspectos_ia(error_json_str, titulo, bullets)
-                        if nuevos_aspectos:
-                            aspectos_dict.update(nuevos_aspectos)
-                            st.info(f"🔧 Aspectos corregidos: {list(nuevos_aspectos.keys())}")
-                            intento_global += 1
-                            continue
-                        else:
-                            return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
-            
+                    st.warning("⚠️ eBay requiere más especificaciones. Corrigiendo con IA...")
+                    nuevos_aspectos = interpretar_error_aspectos_ia(json.dumps(req_offer.json()), titulo, bullets)
+                    if nuevos_aspectos:
+                        aspectos_dict.update(nuevos_aspectos)
+                        intento_global += 1
+                        continue
+                # Error de categoría o local pickup (no corregir automáticamente)
+                if any(err.get("errorId") in (25005, 25008) for err in errores):
+                    return False, f"❌ Error de eBay: {req_offer.json().get('errors', [{}])[0].get('message')}"
+
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
             st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
+
             # ── Paso C: PublishOffer ──
             url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
             st.markdown(f"**Paso C** — `POST {url_publish}`")
             req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {}, marketplace_id=marketplace_id)
+
             if req_publish.status_code == 400:
                 errores = req_publish.json().get("errors", [])
-                # 1. Error de Categoría (25005)
-                if any(err.get("errorId") == 25005 for err in errores):
-                    st.warning("⚠️ Categoría inválida (25005). Consultando Taxonomy API...")
-                    categorias_intentadas.add(str(producto["category_id"]))
-                    
-                    # Primero: intentar con Taxonomy API directamente (más confiable)
-                    nueva_cat = obtener_categoria_hoja_taxonomy(
-                        titulo, tienda_id, marketplace_id,
-                        excluir=categorias_intentadas,
-                        bullets=bullets,
-                        descripcion=producto.get("descripcion_amazon", "")
-                    )
-                    
-                    # Segundo: si Taxonomy no devuelve nada, usar IA como fallback
-                    if not nueva_cat:
-                        st.warning("⚠️ Taxonomy API sin resultados. Usando IA como fallback...")
-                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, bullets=bullets, excluir_categorias=categorias_intentadas)
-                    
-                    if nueva_cat:
-                        st.warning(f"🔄 Categoría corregida: `{nueva_cat}`. Reintentando...")
-                        producto["category_id"] = nueva_cat
-                        intento_global += 1
-                        continue
-                    else:
-                        return False, "❌ Error 25005: No se encontró una categoría válida tras agotar todas las estrategias."
-                
-                # 2. Error de Cantidad (25006)
                 if any(err.get("errorId") == 25006 for err in errores):
-                    st.warning("⚠️ eBay solo permite cantidad de 1 (detectado en Publish). Ajustando stock a 1 y reintentando...")
                     cantidad = 1
                     intento_global += 1
                     continue
-                # CAMBIO 2 — Mismo manejo en Paso C (PublishOffer)
-                if any(err.get("errorId") == 25008 for err in errores):
-                    with st.spinner("🔍 Categoría fuerza Local Pickup. Buscando alternativa postal..."):
-                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        extra = (
-                            "CRÍTICO: La categoría anterior obliga a 'Local Pickup Only'. "
-                            "DEBES elegir una categoría que permita envío postal estándar (USPS, FedEx, UPS). "
-                            "EXCLUYE: Vehículos, Motocicletas, Botes, Maquinaria pesada, Real Estate, Tickets, "
-                            "Artículos de gran tamaño (más de 150 lbs), y cualquier categoría que no permita shipping."
-                        )
-                        categorias_intentadas.add(str(producto["category_id"]))
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra, bullets=bullets, excluir_categorias=categorias_intentadas)
-                        if nueva_cat and nueva_cat != str(producto["category_id"]):
-                            st.warning(f"🔄 Categoría corregida (Local Pickup → Postal): `{nueva_cat}`")
-                            producto["category_id"] = nueva_cat
-                            intento_global += 1
-                            continue
-                        else:
-                            return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
-                
-                # Manejo de error 25604: Product not in catalog
-                if any(err.get("errorId") == 25604 for err in errores):
-                    st.warning("⚠️ Error 25604: eBay no encontró el producto en catálogo. Reintentando...")
-                    intento_global += 1
-                    continue
-
-                # LUGAR 2 — Manejo de error 25002 en Paso C (PublishOffer)
                 if any(err.get("errorId") == 25002 for err in errores):
-                    error_json_str = json.dumps(req_publish.json())
-                    ASPECTOS_ROPA = {"sleeve length", "size type", "size", "department", 
-                                     "style", "pattern", "fabric type", "gender", "age group",
-                                     "neckline", "fit", "occasion", "season", "theme"}
-                    aspectos_requeridos = set()
-                    for err in errores:
-                        if err.get("errorId") == 25002:
-                            params = err.get("parameters", [])
-                            for p in params:
-                                if p.get("name") == "2":
-                                    aspectos_requeridos.add(p.get("value", "").lower())
-                    
-                    es_categoria_ropa = bool(aspectos_requeridos & ASPECTOS_ROPA)
-                    
-                    if es_categoria_ropa:
-                        st.warning("⚠️ eBay detectó categoría de ropa para un producto que no es ropa. Cambiando categoría...")
-                        sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        extra = (
-                            "CRÍTICO: La categoría asignada es de ROPA pero el producto NO es ropa. "
-                            "eBay está pidiendo 'Sleeve Length', 'Size Type' u otros aspectos de vestimenta. "
-                            "DEBES elegir la categoría correcta para este producto ignorando completamente "
-                            "las categorías de Clothing, Shoes, Accessories, Apparel o Fashion."
-                        )
-                        categorias_intentadas.add(str(producto["category_id"]))
-                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, extra_prompt=extra, bullets=bullets, excluir_categorias=categorias_intentadas)
-                        if nueva_cat and nueva_cat != str(producto["category_id"]):
-                            st.warning(f"🔄 Categoría corregida (Ropa → Correcta): `{nueva_cat}`")
-                            producto["category_id"] = nueva_cat
-                            intento_global += 1
-                            continue
-                        else:
-                            return False, "❌ Error 25002: No se pudo asignar una categoría correcta para este producto."
-                    else:
-                        st.warning("⚠️ eBay requiere más especificaciones (Publish). Corrigiendo con IA...")
-                        nuevos_aspectos = interpretar_error_aspectos_ia(error_json_str, titulo, bullets)
-                        if nuevos_aspectos:
-                            aspectos_dict.update(nuevos_aspectos)
-                            st.info(f"🔧 Aspectos corregidos: {list(nuevos_aspectos.keys())}")
-                            intento_global += 1
-                            continue
-                        else:
-                            return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
-            # Manejo de error 500 — eBay server error (25001)
+                    st.warning("⚠️ eBay requiere más especificaciones (Publish). Corrigiendo...")
+                    nuevos_aspectos = interpretar_error_aspectos_ia(json.dumps(req_publish.json()), titulo, bullets)
+                    if nuevos_aspectos:
+                        aspectos_dict.update(nuevos_aspectos)
+                        intento_global += 1
+                        continue
+                if any(err.get("errorId") in (25005, 25008, 25604) for err in errores):
+                    return False, f"❌ Error de eBay (Publish): {req_publish.json().get('errors', [{}])[0].get('message')}"
+
             if req_publish.status_code == 500:
-                try:
-                    errores_500 = req_publish.json().get("errors", [])
-                except Exception:
-                    errores_500 = []
-                if any(err.get("errorId") == 25001 for err in errores_500):
-                    st.warning("⚠️ Error interno de eBay (25001). Reintentando en 3 segundos...")
-                    import time
-                    time.sleep(3)
-                    intento_global += 1
-                    continue
+                st.warning("⚠️ Error interno de eBay (500). Reintentando en 3s...")
+                import time
+                time.sleep(3)
+                intento_global += 1
+                continue
+
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
             
-            mensaje_exito = (
-                f"✅ **Publicado exitosamente**\n\n"
-                f"🎫 **SKU:** `{sku}`\n\n"
-                f"📌 **Listing ID:** [`{listing_id}`](https://www.ebay.com/itm/{listing_id})"
-            )
+            mensaje_exito = f"✅ **Publicado exitosamente**\n\nSKU: `{sku}`\nListing ID: [`{listing_id}`](https://www.ebay.com/itm/{listing_id})"
+            
             # ── Paso D: Promoted Listings ──
             if promocionar and listing_id != "N/A":
-                st.markdown(f"**Paso D** — Promoted Listings Standard")
                 campaign_id = buscar_o_crear_campana(tienda_id, ad_rate_pct)
                 if campaign_id:
                     if agregar_ad_a_campana(tienda_id, campaign_id, listing_id, ad_rate_pct):
                         st.success(f"📢 Producto promocionado: {ad_rate_pct}%")
-                        mensaje_exito += f"\n\n📢 **Promoted Listings:** Ad Rate {ad_rate_pct}%"
+                        mensaje_exito += f"\n\n📢 **Promoted Listings Activo**"
+
             return (True, mensaje_exito)
+
         except requests.exceptions.HTTPError as e:
             if intento_global >= max_reintentos_globales - 1:
-                return False, f"❌ Error HTTP {e.response.status_code} tras varios intentos:\n{e.response.text}"
+                return False, f"❌ Error HTTP {e.response.status_code}:\n{e.response.text}"
             intento_global += 1
-            st.warning(f"⚠️ Error eBay. Reintentando flujo completo con SKU nuevo ({intento_global}/{max_reintentos_globales})...")
+            st.warning(f"⚠️ Reintentando flujo completo con SKU nuevo ({intento_global}/{max_reintentos_globales})...")
         except Exception as e:
             if intento_global >= max_reintentos_globales - 1:
-                return False, f"❌ Error inesperado tras varios intentos: {str(e)}"
+                return False, f"❌ Error inesperado: {str(e)}"
             intento_global += 1
-            st.warning(f"⚠️ Reintentando flujo global por error: {str(e)[:100]}")
     
     return False, "❌ No se pudo publicar tras agotar todos los reintentos y estrategias de recuperación."
 # ─────────────────────────────────────────────────────────
