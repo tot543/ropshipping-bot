@@ -12,13 +12,6 @@ if os.getcwd() not in sys.path:
 from utils.ebay_auth import get_valid_token, refresh_access_token
 from skills.ebay_orders import EbayOrdersAgent
 
-# El root ya debe estar en el path por app.py, pero por seguridad:
-if os.getcwd() not in sys.path:
-    sys.path.append(os.getcwd())
-
-from utils.ebay_auth import get_valid_token, refresh_access_token
-from skills.ebay_orders import EbayOrdersAgent
-
 st.set_page_config(page_title="Órdenes y Despachos | eBay Hub", page_icon="📦", layout="wide")
 
 def renderizar_sidebar() -> None:

@@ -67,11 +67,6 @@ def interpretar_error_aspectos_ia(error_json: str, titulo: str = "", bullets: li
     except Exception as e:
         print(f"DEBUG IA LOCAL | Error: {e}")
     return {}
-<<<<<<< HEAD
-=======
-
-
->>>>>>> main
 def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US") -> str:
     """
     Consulta la Taxonomy API de eBay para obtener sugerencias oficiales de categorías.
@@ -90,10 +85,6 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
         tree_id = resp_tree.json().get("categoryTreeId")
         if not tree_id:
             return ""
-<<<<<<< HEAD
-=======
-
->>>>>>> main
         # 2. Obtener sugerencias basadas en el título
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
         resp_sug = requests.get(url_sug, headers=headers, timeout=15)
@@ -108,11 +99,6 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     except Exception as e:
         print(f"DEBUG TAXONOMY | Error: {e}")
     return ""
-<<<<<<< HEAD
-=======
-
-
->>>>>>> main
 def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set()) -> str:
     """
     Consulta Taxonomy API y devuelve directamente el categoryId más relevante.
@@ -121,10 +107,6 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
     try:
         app_token = get_app_token()
         headers = construir_headers_ebay(app_token, marketplace_id)
-<<<<<<< HEAD
-=======
-
->>>>>>> main
         url_tree = f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}"
         resp_tree = requests.get(url_tree, headers=headers, timeout=15)
         if resp_tree.status_code != 200:
@@ -132,18 +114,10 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         tree_id = resp_tree.json().get("categoryTreeId", "")
         if not tree_id:
             return ""
-<<<<<<< HEAD
-=======
-
->>>>>>> main
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
         resp_sug = requests.get(url_sug, headers=headers, timeout=15)
         if resp_sug.status_code != 200:
             return ""
-<<<<<<< HEAD
-=======
-
->>>>>>> main
         for s in resp_sug.json().get("categorySuggestions", []):
             cat = s.get("category", {})
             cat_id = str(cat.get("categoryId", ""))
@@ -154,11 +128,6 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
     except Exception as e:
         print(f"DEBUG TAXONOMY DIRECTA | Error: {e}")
     return ""
-<<<<<<< HEAD
-=======
-
-
->>>>>>> main
 def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "", bullets: list = [], excluir_categorias: set = set()) -> str:
     """
     Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
@@ -224,11 +193,6 @@ def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY
     except Exception as e:
         print(f"DEBUG IA CATEGORIA | Error: {e}")
     return ""
-<<<<<<< HEAD
-=======
-
-
->>>>>>> main
 # ─────────────────────────────────────────────────────────
 # HELPERS HTTP
 # ─────────────────────────────────────────────────────────
@@ -257,10 +221,6 @@ def hacer_peticion_con_reintento(
         # Recuperar marketplace_id default si no se provee
         config_tienda = st.session_state.get("config_tienda", {})
         marketplace_id = config_tienda.get("site_id", "EBAY_US")
-<<<<<<< HEAD
-=======
-
->>>>>>> main
     token = get_valid_token(tienda_id)
     headers = construir_headers_ebay(token, marketplace_id)
     kwargs = {"url": url, "headers": headers, "timeout": 20}
@@ -277,10 +237,6 @@ def hacer_peticion_con_reintento(
     if respuesta.status_code >= 400:
         print(f"DEBUG EBAY API | {metodo} {url} | Status: {respuesta.status_code}")
         print(f"DEBUG EBAY API | Response: {respuesta.text}")
-<<<<<<< HEAD
-=======
-
->>>>>>> main
     return respuesta
 @st.cache_data(show_spinner=False, ttl=3600)
 def obtener_politicas_ebay(tienda_id: str, tipo: str, marketplace_id: str = "EBAY_US") -> dict:
@@ -532,10 +488,6 @@ def publicar_en_ebay(
     marketplace_id = producto.get("marketplace_id") or config_tienda.get("site_id", "EBAY_US")
     
     categorias_intentadas = set()
-<<<<<<< HEAD
-=======
-
->>>>>>> main
     while intento_global < max_reintentos_globales:
         sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
         try:
@@ -562,10 +514,6 @@ def publicar_en_ebay(
             req_item = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item, marketplace_id=marketplace_id)
             req_item.raise_for_status()
             st.success(f"✅ Inventory Item creado — SKU: `{sku}`")
-<<<<<<< HEAD
-=======
-
->>>>>>> main
             # ── Paso B: CreateOffer ──
             url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
             payload_oferta = construir_payload_oferta(
@@ -609,10 +557,6 @@ def publicar_en_ebay(
                     cantidad = 1
                     intento_global += 1
                     continue
-<<<<<<< HEAD
-=======
-
->>>>>>> main
                 # CAMBIO 1 — Manejar errorId 25008 en Paso B (CreateOffer)
                 if any(err.get("errorId") == 25008 for err in errores):
                     with st.spinner("🔍 Categoría fuerza Local Pickup. Buscando alternativa postal..."):
@@ -632,10 +576,6 @@ def publicar_en_ebay(
                             continue
                         else:
                             return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
-<<<<<<< HEAD
-=======
-
->>>>>>> main
                 # LUGAR 1 — Mano de error 25002 en Paso B (CreateOffer)
                 if any(err.get("errorId") == 25002 for err in errores):
                     error_json_str = json.dumps(req_offer.json())
@@ -684,18 +624,10 @@ def publicar_en_ebay(
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
             st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
-<<<<<<< HEAD
-=======
-
->>>>>>> main
             # ── Paso C: PublishOffer ──
             url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
             st.markdown(f"**Paso C** — `POST {url_publish}`")
             req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {}, marketplace_id=marketplace_id)
-<<<<<<< HEAD
-=======
-
->>>>>>> main
             if req_publish.status_code == 400:
                 errores = req_publish.json().get("errors", [])
                 # 1. Error de Categoría (25005)
@@ -726,10 +658,6 @@ def publicar_en_ebay(
                     cantidad = 1
                     intento_global += 1
                     continue
-<<<<<<< HEAD
-=======
-
->>>>>>> main
                 # CAMBIO 2 — Mismo manejo en Paso C (PublishOffer)
                 if any(err.get("errorId") == 25008 for err in errores):
                     with st.spinner("🔍 Categoría fuerza Local Pickup. Buscando alternativa postal..."):
@@ -749,10 +677,6 @@ def publicar_en_ebay(
                             continue
                         else:
                             return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
-<<<<<<< HEAD
-=======
-
->>>>>>> main
                 # LUGAR 2 — Manejo de error 25002 en Paso C (PublishOffer)
                 if any(err.get("errorId") == 25002 for err in errores):
                     error_json_str = json.dumps(req_publish.json())
@@ -806,10 +730,6 @@ def publicar_en_ebay(
                 f"🎫 **SKU:** `{sku}`\n\n"
                 f"📌 **Listing ID:** [`{listing_id}`](https://www.ebay.com/itm/{listing_id})"
             )
-<<<<<<< HEAD
-=======
-
->>>>>>> main
             # ── Paso D: Promoted Listings ──
             if promocionar and listing_id != "N/A":
                 st.markdown(f"**Paso D** — Promoted Listings Standard")
@@ -818,13 +738,7 @@ def publicar_en_ebay(
                     if agregar_ad_a_campana(tienda_id, campaign_id, listing_id, ad_rate_pct):
                         st.success(f"📢 Producto promocionado: {ad_rate_pct}%")
                         mensaje_exito += f"\n\n📢 **Promoted Listings:** Ad Rate {ad_rate_pct}%"
-<<<<<<< HEAD
             return (True, mensaje_exito)
-=======
-
-            return (True, mensaje_exito)
-
->>>>>>> main
         except requests.exceptions.HTTPError as e:
             if intento_global >= max_reintentos_globales - 1:
                 return False, f"❌ Error HTTP {e.response.status_code} tras varios intentos:\n{e.response.text}"
@@ -837,11 +751,6 @@ def publicar_en_ebay(
             st.warning(f"⚠️ Reintentando flujo global por error: {str(e)[:100]}")
     
     return False, "❌ No se pudo publicar tras agotar todos los reintentos y estrategias de recuperación."
-<<<<<<< HEAD
-=======
-
-
->>>>>>> main
 # ─────────────────────────────────────────────────────────
 # UI
 # ─────────────────────────────────────────────────────────
