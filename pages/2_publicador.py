@@ -594,6 +594,16 @@ def agregar_ad_a_campana(tienda_id: str, campaign_id: str, listing_id: str, bid_
     except Exception as e:
         st.warning(f"⚠️ Error al añadir ad: {str(e)[:200]}")
         return False
+def categoria_pertenece_a_motors(category_id: str, token: str) -> bool:
+    """Verifica con la API de eBay si una categoría pertenece al árbol Motors (tree 100)"""
+    url = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/100/get_category_subtree?category_id={category_id}"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        return resp.status_code == 200
+    except:
+        return False
+
 # ─────────────────────────────────────────────────────────
 # FUNCIÓN PRINCIPAL DE PUBLICACIÓN
 # ─────────────────────────────────────────────────────────
@@ -641,13 +651,12 @@ def publicar_en_ebay(
 
     if es_motors:
         marketplace_id = "EBAY_MOTORS"
-        cat_original = str(producto["category_id"])
+        cat_original = str(producto.get("category_id", ""))
+        token_ebay = get_valid_token(tienda_id)
         
-        if es_categoria_motors(cat_original):
-            # Categoría original ya es de Motors → respetarla
-            st.success(f"✅ Categoría original ya es Motors: `{cat_original}` — sin cambios")
+        if categoria_pertenece_a_motors(cat_original, token_ebay):
+            st.success(f"✅ Categoría `{cat_original}` ya es Motors — sin cambios")
         else:
-            # Categoría original incorrecta → corregir con Taxonomy árbol 100
             st.warning(f"⚠️ Categoría `{cat_original}` no es Motors. Corrigiendo...")
             cat_taxonomy = obtener_categoria_hoja_taxonomy(
                 producto.get("titulo", ""), tienda_id, "EBAY_MOTORS",
