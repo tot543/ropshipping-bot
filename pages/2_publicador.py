@@ -640,6 +640,19 @@ def publicar_en_ebay(
     # Prioridad al marketplace detectado por el Cazador
     marketplace_id = producto.get("marketplace_id") or config_tienda.get("site_id", "EBAY_US")
     
+    # Corrección preventiva de categoría por keywords ANTES de publicar
+    bullets_preventivo = producto.get("bullets_amazon", [])
+    cat_preventiva = detectar_categoria_por_keywords(producto.get("titulo", ""), bullets_preventivo)
+    if cat_preventiva:
+        if cat_preventiva != str(producto["category_id"]):
+            st.info(f"⚡ Categoría pre-corregida por keywords: `{producto['category_id']}` → `{cat_preventiva}`")
+        producto["category_id"] = cat_preventiva
+
+    # Ajustar marketplace según categoría detectada
+    if es_categoria_motors(str(producto["category_id"])):
+        marketplace_id = "EBAY_MOTORS"
+        st.info("🚗 Marketplace ajustado a EBAY_MOTORS por categoría de autopartes")
+
     categorias_intentadas = set()
     while intento_global < max_reintentos_globales:
         sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
