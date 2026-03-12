@@ -181,19 +181,9 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         texto = _re.sub(r'\s+', ' ', texto).strip()
         return texto
 
-    # Usar directamente el título original (eBay soporta español en Taxonomy API)
-    # Igual que cuando el vendedor escribe el título manualmente en el formulario de eBay
-    if bullets:
-        # Preferir el primer bullet de Amazon (más descriptivo del producto)
-        query_taxonomy = limpiar_query(bullets[0])[:100] if isinstance(bullets, list) and bullets else ""
-    else:
-        query_taxonomy = limpiar_query(titulo)[:100]
-
-    # Si después de limpiar queda vacío o muy corto, usar el título
-    if len(query_taxonomy) < 5:
-        query_taxonomy = limpiar_query(titulo)[:100]
-
-    st.info(f"🔍 Query Taxonomy: '{query_taxonomy[:60]}...'")
+    # Usar el título de eBay en español directamente (eBay lo soporta)
+    query_taxonomy = limpiar_query(titulo)[:100]
+    st.info(f"🔍 Query Taxonomy: '{query_taxonomy[:60]}'")
 
     # Obtener App Token
     try:
