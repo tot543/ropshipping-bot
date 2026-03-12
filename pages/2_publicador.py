@@ -230,13 +230,10 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         }
 
         for s in r_sug.json().get("categorySuggestions", []):
-            cat = s.get("category", {})
-            cat_id = str(cat.get("categoryId", ""))
-            cat_nombre = cat.get("categoryName", "")
-            if not cat_id or cat_id in excluir or cat_id in CATEGORIAS_INVALIDAS:
-                continue
-            st.success(f"✅ TAXONOMY: `{cat_id}` ({cat_nombre})")
-            return cat_id
+            cat_id = str(s.get("category", {}).get("categoryId", ""))
+            if cat_id and cat_id not in excluir and cat_id not in CATEGORIAS_INVALIDAS:
+                st.success(f"✅ TAXONOMY: `{cat_id}` ({s.get('category',{}).get('categoryName','')})")
+                return cat_id
     except Exception as e:
         st.error(f"❌ Taxonomy excepción: {e}")
 
@@ -617,18 +614,43 @@ def publicar_en_ebay(
     titulo_prev = producto.get("titulo", "")
     bullets_prev = producto.get("bullets_amazon", [])
 
+    BLACKLIST_CATEGORIAS = {
+        "122773",  # Eye Drops & Wash
+        "31414",   # Vision Care
+        "26395",   # Health & Beauty
+        "15709",   # Athletic Shoes
+        "99697",   # Washer & Dryer Parts
+        "45794",   # Home Windows
+        "12",      # Other Antiques
+        "50445",   # Decals & Vinyls
+        "14936",   # Car Speakers
+        "6007",    # eBay Motors ROOT subcategory genérica
+        "6005",    # eBay Motors ROOT subcategory genérica
+        "6006",    # eBay Motors ROOT subcategory genérica
+    }
+
     # DIAGNÓSTICO 1 — mostrar título completo que se usará
     st.info(f"📋 Título eBay para Taxonomy: '{titulo_prev}'")
     st.info(f"📋 Categoría original del producto: '{producto['category_id']}'")
 
+    # Si la categoría original ya es inválida, buscar con Taxonomy ignorándola
+    if str(producto["category_id"]) in BLACKLIST_CATEGORIAS:
+        st.warning(f"⚠️ Categoría original `{producto['category_id']}` está en blacklist. Forzando búsqueda...")
+        cat_taxonomy = obtener_categoria_hoja_taxonomy(
+            titulo_prev, tienda_id, marketplace_id,
+            excluir=BLACKLIST_CATEGORIAS,  # excluir toda la blacklist
+            bullets=bullets_prev
+        )
+    else:
+        cat_taxonomy = obtener_categoria_hoja_taxonomy(
+            titulo_prev, tienda_id, marketplace_id,
+            excluir=set(),
+            bullets=bullets_prev
+        )
+
     cat_keywords = detectar_categoria_por_keywords(titulo_prev, bullets_prev)
     st.info(f"🔑 Keywords detectó: '{cat_keywords}' (vacío = no hubo match)")
 
-    cat_taxonomy = obtener_categoria_hoja_taxonomy(
-        titulo_prev, tienda_id, marketplace_id,
-        excluir=set(),
-        bullets=bullets_prev
-    )
     st.info(f"🌐 Taxonomy devolvió: '{cat_taxonomy}' (vacío = sin resultados)")
 
     # Decidir categoría final
