@@ -119,7 +119,30 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         if not tree_id:
             st.warning("❌ DIAGNÓSTICO: categoryTreeId vino vacío en la respuesta.")
             return ""
-        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
+        # Traducir título al inglés para la Taxonomy API
+        try:
+            api_key = st.secrets["groq"]["api_key"]
+            r_trad = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "openai/gpt-oss-120b",
+                    "messages": [
+                        {"role": "system", "content": "Translate the product title to English. Return ONLY the translated title, nothing else. Max 8 words."},
+                        {"role": "user", "content": titulo}
+                    ]
+                },
+                timeout=10
+            )
+            if r_trad.status_code == 200:
+                titulo_en = r_trad.json()['choices'][0]['message']['content'].strip()
+                st.info(f"🌐 Título traducido para Taxonomy: '{titulo_en}'")
+            else:
+                titulo_en = titulo
+        except Exception:
+            titulo_en = titulo
+        titulo_corto = " ".join(titulo_en.split()[:6])
+        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo_corto)}"
         resp_sug = requests.get(url_sug, headers=headers_tax, timeout=10)
         if resp_sug.status_code != 200:
             st.warning(f"❌ DIAGNÓSTICO Suggestions: status={resp_sug.status_code} body={resp_sug.text[:200]}")
