@@ -128,6 +128,12 @@ def detectar_categoria_por_keywords(titulo: str, bullets: list = []) -> str:
         (["radiator", "radiador"], "42435"),
         (["cv axle", "axle shaft", "eje"], "40564"),
         (["catalytic converter", "catalizador"], "33606"),
+        (["window visor", "rain guard", "vent visor", "wind deflector",
+          "visera", "viseras de ventana", "deflector de viento", 
+          "deflector de lluvia", "protector de lluvia",
+          "wrangler", "jeep", "gladiator", "tacoma", "tundra",
+          "4runner", "ram", "sierra", "f150", "mustang", "camaro",
+          "sun shade", "sunshade visor", "windshield visor"], "33637"),
         # ── Electrónica ──
         (["bluetooth headphone", "wireless headphone", "auricular", "audifonos"], "112529"),
         (["laptop", "notebook"], "177"),
@@ -254,7 +260,11 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         CATEGORIAS_INVALIDAS = {
             "12","20081","550","625","30090","30097","1","64482","15724",
             "11450","2984","6000","4","353","11233","15709","99697",
-            "260308","20710","50445","14936","3270","175716"
+            "260308","20710","50445","14936","3270","175716",
+            "45794",  # Home Windows
+            "180113", # Windows & Window Hardware
+            "3187",   # Building & Hardware
+            "11700"   # Home & Garden
         }
 
         for s in r_sug.json().get("categorySuggestions", []):
