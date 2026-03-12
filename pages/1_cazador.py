@@ -1,25 +1,16 @@
-"""
-pages/1_cazador.py — Cazador de Productos (Producción)
-==============================================================================
-FASE PRODUCCIÓN: Sin datos simulados. Toda la información proviene de APIs reales:
-  - eBay Browse API (OAuth) → título, precio, categoryId
-  - ScraperAPI + BeautifulSoup → precio Amazon, imágenes, bullets, descripción
-
-Configuración requerida en .streamlit/secrets.toml:
-  [ebay] app_id, cert_id, runame
-  [tiendas.<id>] oauth_token, refresh_token
-  [amazon] scraper_api_key
-"""
-
-import sys
-import os
-import re
-import requests
 import streamlit as st
+import requests
+import re
+import os
+import sys
 from bs4 import BeautifulSoup
+from urllib.parse import quote
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.ebay_auth import get_valid_token, refresh_access_token
+# El root ya debe estar en el path por app.py, pero por seguridad:
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
+
+from utils.ebay_auth import get_valid_token, refresh_access_token, get_app_token
 
 st.set_page_config(page_title="Cazador | eBay Hub", page_icon="🎯", layout="wide")
 
@@ -104,6 +95,35 @@ def extraer_datos_ebay(item_id: str, tienda_id: str) -> dict:
         raise ValueError(f"eBay no devolvió un título para el Item ID {item_id}")
     if precio <= 0:
         raise ValueError(f"eBay devolvió un precio de $0 para el Item ID {item_id}")
+
+    # FIX 2 — Validar categoría con Taxonomy API para obtener la categoría hoja correcta
+    try:
+        app_token = get_app_token()
+        app_headers = {
+            "Authorization": f"Bearer {app_token}",
+            "Content-Type": "application/json",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+        }
+        url_tree = "https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=EBAY_US"
+        resp_tree = requests.get(url_tree, headers=app_headers, timeout=10)
+        if resp_tree.status_code == 200:
+            tree_id = resp_tree.json().get("categoryTreeId", "")
+            if tree_id:
+                url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
+                resp_sug = requests.get(url_sug, headers=app_headers, timeout=10)
+                if resp_sug.status_code == 200:
+                    sugerencias = resp_sug.json().get("categorySuggestions", [])
+                    if sugerencias:
+                        # Obtener la primera sugerencia (usualmente la mejor)
+                        primera_sug = sugerencias[0]
+                        cat_sugerida = primera_sug.get("category", {})
+                        cat_id_sugerida = str(cat_sugerida.get("categoryId", ""))
+                        cat_nombre = cat_sugerida.get("categoryName", "")
+                        if cat_id_sugerida and cat_id_sugerida != str(category_id):
+                            st.info(f"🔍 Taxonomía eBay sugiere categoría hoja: `{cat_id_sugerida}` ({cat_nombre})")
+                            category_id = cat_id_sugerida
+    except Exception as e:
+        print(f"DEBUG TAXONOMY CAZADOR | Error: {e}")
 
     return {
         "titulo":         titulo,
