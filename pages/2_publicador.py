@@ -496,6 +496,17 @@ def construir_payload_inventory_item(producto: dict, descripcion_html: str, aspe
             "imageUrls": imagenes,
         },
     }
+
+CATEGORIAS_EBAY_MOTORS = {
+    "262161","262160","262241","262244","262200","33559","33563",
+    "33640","33642","33643","33649","38635","33596","42612","33590",
+    "33558","42435","40564","33606","33637","33566","33638","33639",
+    "9886","50445","6030","179637","179638","10063"
+}
+
+def es_categoria_motors(category_id: str) -> bool:
+    return str(category_id) in CATEGORIAS_EBAY_MOTORS
+
 def construir_payload_oferta(
     producto: dict, 
     sku: str, 
@@ -658,12 +669,14 @@ def publicar_en_ebay(
             st.success(f"✅ Inventory Item creado — SKU: `{sku}`")
             # ── Paso B: CreateOffer ──
             url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
+            # Ajustar marketplace según categoría
+            marketplace_oferta = "EBAY_MOTORS" if es_categoria_motors(str(producto["category_id"])) else marketplace_id
             payload_oferta = construir_payload_oferta(
                 producto, sku, config_tienda, 
                 pol_fulfillment_id, pol_payment_id, pol_return_id, 
                 merchant_location_key,
                 descripcion_html_generada, cantidad,
-                marketplace_id=marketplace_id
+                marketplace_id=marketplace_oferta
             )
             
             st.markdown(f"**Paso B** — `POST {url_offer}`")
@@ -829,6 +842,13 @@ def publicar_en_ebay(
                             continue
                         else:
                             return False, "❌ Error 25008: No se encontró categoría compatible con envío postal."
+                
+                # Manejo de error 25604: Product not in catalog
+                if any(err.get("errorId") == 25604 for err in errores):
+                    st.warning("⚠️ Error 25604: eBay no encontró el producto en catálogo. Reintentando...")
+                    intento_global += 1
+                    continue
+
                 # LUGAR 2 — Manejo de error 25002 en Paso C (PublishOffer)
                 if any(err.get("errorId") == 25002 for err in errores):
                     error_json_str = json.dumps(req_publish.json())
