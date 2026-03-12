@@ -99,12 +99,70 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     except Exception as e:
         print(f"DEBUG TAXONOMY | Error: {e}")
     return ""
+def detectar_categoria_por_keywords(titulo: str, bullets: list = []) -> str:
+    """
+    Detección rápida de categoría por palabras clave del producto.
+    Evita depender de la Taxonomy API para productos comunes.
+    Retorna category_id como string, o "" si no detecta nada.
+    """
+    texto = (titulo + " " + " ".join(bullets[:3])).lower()
+    
+    MAPA_CATEGORIAS = [
+        # ── eBay Motors Parts ──
+        (["mirror assembly", "side mirror", "espejo lateral", "retrovisor", "espejo del lado",
+          "passenger mirror", "driver mirror", "mirror replacement"], "262161"),
+        (["headlight", "head light", "faro delantero", "headlamp"], "262241"),
+        (["tail light", "taillight", "faro trasero", "rear light"], "262244"),
+        (["bumper", "parachoque", "parachoques", "front bumper", "rear bumper"], "262200"),
+        (["brake pad", "brake shoe", "freno", "pastilla de freno"], "33559"),
+        (["rotor", "brake rotor", "disco de freno"], "33563"),
+        (["hood", "capó", "capo"], "33640"),
+        (["fender", "guardabarros", "guardafango"], "33643"),
+        (["grille", "parrilla delantera", "front grille"], "33649"),
+        (["door handle", "manija", "manilla de puerta"], "33642"),
+        (["window regulator", "regulador de ventana"], "42612"),
+        (["strut", "shock absorber", "amortiguador"], "33596"),
+        (["control arm", "brazo de control"], "38635"),
+        (["alternator", "alternador", "starter", "arrancador"], "33590"),
+        (["wiper blade", "limpiaparabrisas"], "33558"),
+        (["radiator", "radiador"], "42435"),
+        (["cv axle", "axle shaft", "eje"], "40564"),
+        (["catalytic converter", "catalizador"], "33606"),
+        # ── Electrónica ──
+        (["bluetooth headphone", "wireless headphone", "auricular", "audifonos"], "112529"),
+        (["laptop", "notebook"], "177"),
+        (["tablet", "ipad"], "171"),
+        (["smartphone", "iphone", "android phone", "celular"], "9355"),
+        (["smart watch", "smartwatch", "reloj inteligente"], "178893"),
+        (["wireless charger", "cargador inalámbrico"], "183071"),
+        (["security camera", "camara seguridad", "cámara de seguridad"], "114722"),
+        # ── Hogar ──
+        (["gaming chair", "silla gaming", "office chair", "silla de oficina"], "20625"),
+        (["standing desk", "escritorio"], "23347"),
+        (["air purifier", "purificador de aire"], "43514"),
+        (["coffee maker", "cafetera"], "20676"),
+        (["vacuum cleaner", "aspiradora"], "43569"),
+        # ── Herramientas ──
+        (["power drill", "taladro", "drill bit"], "631"),
+        (["wrench", "llave inglesa", "socket set"], "631"),
+    ]
+    
+    for keywords, cat_id in MAPA_CATEGORIAS:
+        if any(kw in texto for kw in keywords):
+            return cat_id
+    
+    return ""
 def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set(), bullets: list = [], descripcion: str = "") -> str:
     """
     Consulta Taxonomy API y devuelve directamente el categoryId más relevante.
     Omite cualquier ID que esté en el set `excluir`.
     Usa bullets de Amazon (en inglés) para construir la query si están disponibles.
     """
+    # Detección rápida por keywords antes de llamar a la API
+    cat_rapida = detectar_categoria_por_keywords(titulo, bullets)
+    if cat_rapida and cat_rapida not in excluir:
+        st.success(f"⚡ Categoría detectada por keywords: `{cat_rapida}`")
+        return cat_rapida
     try:
         app_token = get_app_token()
         if not app_token:
