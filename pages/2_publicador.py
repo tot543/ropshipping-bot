@@ -641,17 +641,23 @@ def publicar_en_ebay(
 
     if es_motors:
         marketplace_id = "EBAY_MOTORS"
-        st.info("🚗 Marketplace: EBAY_MOTORS (activado por usuario)")
-        # Corregir categoría con Taxonomy árbol 100
-        cat_taxonomy = obtener_categoria_hoja_taxonomy(
-            titulo_prev, tienda_id, "EBAY_MOTORS",
-            excluir={str(producto["category_id"])},
-            bullets=bullets_prev,
-            forzar_tree_id="100"
-        )
-        if cat_taxonomy:
-            producto["category_id"] = cat_taxonomy
-            st.success(f"✅ Categoría Motors: `{cat_taxonomy}`")
+        cat_original = str(producto["category_id"])
+        
+        if es_categoria_motors(cat_original):
+            # Categoría original ya es de Motors → respetarla
+            st.success(f"✅ Categoría original ya es Motors: `{cat_original}` — sin cambios")
+        else:
+            # Categoría original incorrecta → corregir con Taxonomy árbol 100
+            st.warning(f"⚠️ Categoría `{cat_original}` no es Motors. Corrigiendo...")
+            cat_taxonomy = obtener_categoria_hoja_taxonomy(
+                producto.get("titulo", ""), tienda_id, "EBAY_MOTORS",
+                excluir={cat_original},
+                bullets=producto.get("bullets_amazon", []),
+                forzar_tree_id="100"
+            )
+            if cat_taxonomy:
+                producto["category_id"] = cat_taxonomy
+                st.success(f"✅ Categoría corregida: `{cat_taxonomy}`")
     else:
         # Si es_motors=False → no tocar nada, respetar categoría original del Cazador
         st.info(f"🛒 Marketplace: {marketplace_id}")
