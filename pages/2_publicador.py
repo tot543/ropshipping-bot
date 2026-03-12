@@ -11,6 +11,7 @@ import os
 import uuid
 import json
 import streamlit as st
+import requests
 import re
 from datetime import datetime, timezone
 from urllib.parse import quote
