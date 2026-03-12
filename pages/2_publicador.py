@@ -139,14 +139,22 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
                         {
                             "role": "system",
                             "content": (
-                                "You are a product classifier. Extract the product type in English "
-                                "as a short search query (max 5 words) suitable for eBay category search. "
-                                "Focus on WHAT the product IS, not the brand or compatibility. "
-                                "Examples:\n"
-                                "- 'Espejo retrovisor Chevy Express' → 'car side mirror assembly'\n"
-                                "- 'Faro delantero Toyota Camry' → 'headlight assembly'\n"
-                                "- 'Audífonos inalámbricos Bluetooth' → 'wireless bluetooth headphones'\n"
-                                "Return ONLY the short query, nothing else."
+                                "You are an eBay category expert. Given a product title or description, "
+                                "extract a SHORT and SPECIFIC product search query in English (3-5 words max) "
+                                "that identifies exactly WHAT the physical product IS.\n\n"
+                                "RULES:\n"
+                                "1. Focus on the PHYSICAL OBJECT, not compatibility or OEM numbers.\n"
+                                "2. Include the product type AND material/mechanism if relevant.\n"
+                                "3. NEVER output generic terms like 'OEM part', 'replacement part', 'accessory'.\n"
+                                "4. NEVER include brand names, car models, or year ranges.\n\n"
+                                "EXAMPLES:\n"
+                                "- 'Espejo lateral pasajero Chevy Express 2008' → 'passenger side mirror assembly'\n"
+                                "- 'Faro delantero Toyota Camry 2019 LED' → 'headlight assembly'\n"
+                                "- 'Manija puerta delantera Ford F150' → 'exterior door handle'\n"
+                                "- 'Audífonos Bluetooth Sony cancelación ruido' → 'bluetooth noise cancelling headphones'\n"
+                                "- 'Silla gaming ergonómica reclinable' → 'ergonomic gaming chair'\n"
+                                "- 'Cargador inalámbrico 15W USB-C' → 'wireless phone charger'\n\n"
+                                "Return ONLY the short query. No explanations, no punctuation."
                             )
                         },
                         {"role": "user", "content": texto_para_traducir}
@@ -173,7 +181,8 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
             return ""
         CATEGORIAS_INVALIDAS = {
             "12", "20081", "550", "625", "30090", "30097", "1", "64482",
-            "15724", "11450", "2984", "6000", "4", "353", "11233"
+            "15724", "11450", "2984", "6000", "4", "353", "11233",
+            "15709", "99697", "260308", "20710"
         }
         for s in sugerencias:
             cat = s.get("category", {})
