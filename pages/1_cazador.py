@@ -11,8 +11,11 @@ Configuración requerida en .streamlit/secrets.toml:
 """
 import sys
 import os
-# Asegurar que el directorio raíz esté en el path para importar utils
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pathlib import Path
+# Fix para asegurar que los módulos en el directorio raíz sean importables
+ROOT = str(Path(__file__).resolve().parent.parent)
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
