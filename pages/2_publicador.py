@@ -99,93 +99,20 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     except Exception as e:
         print(f"DEBUG TAXONOMY | Error: {e}")
     return ""
-def detectar_categoria_por_keywords(titulo: str, bullets: list = []) -> str:
-    """
-    Detección rápida de categoría por palabras clave del producto.
-    Evita depender de la Taxonomy API para productos comunes.
-    Retorna category_id como string, o "" si no detecta nada.
-    """
-    texto = (titulo + " " + " ".join(bullets[:3])).lower()
-    
-    MAPA_CATEGORIAS = [
-        # ── eBay Motors Parts ──
-        (["mirror assembly", "side mirror", "espejo lateral", "retrovisor", "espejo del lado",
-          "passenger mirror", "driver mirror", "mirror replacement"], "262161"),
-        (["headlight", "head light", "faro delantero", "headlamp"], "262241"),
-        (["tail light", "taillight", "faro trasero", "rear light"], "262244"),
-        (["bumper", "parachoque", "parachoques", "front bumper", "rear bumper"], "262200"),
-        (["brake pad", "brake shoe", "freno", "pastilla de freno"], "33559"),
-        (["rotor", "brake rotor", "disco de freno"], "33563"),
-        (["hood", "capó", "capo"], "33640"),
-        (["fender", "guardabarros", "guardafango"], "33643"),
-        (["grille", "parrilla delantera", "front grille"], "33649"),
-        (["door handle", "manija", "manilla de puerta"], "33642"),
-        (["window regulator", "regulador de ventana"], "42612"),
-        (["strut", "shock absorber", "amortiguador"], "33596"),
-        (["control arm", "brazo de control"], "38635"),
-        (["alternator", "alternador", "starter", "arrancador"], "33590"),
-        (["wiper blade", "limpiaparabrisas"], "33558"),
-        (["radiator", "radiador"], "42435"),
-        (["cv axle", "axle shaft", "eje"], "40564"),
-        (["catalytic converter", "catalizador"], "33606"),
-        (["window visor", "rain guard", "vent visor", "wind deflector",
-          "visera", "viseras de ventana", "deflector de viento", 
-          "deflector de lluvia", "protector de lluvia",
-          "wrangler", "jeep", "gladiator", "tacoma", "tundra",
-          "4runner", "ram", "sierra", "f150", "mustang", "camaro",
-          "sun shade", "sunshade visor", "windshield visor"], "33637"),
-        # ── Electrónica ──
-        (["bluetooth headphone", "wireless headphone", "auricular", "audifonos"], "112529"),
-        (["laptop", "notebook"], "177"),
-        (["tablet", "ipad"], "171"),
-        (["smartphone", "iphone", "android phone", "celular"], "9355"),
-        (["smart watch", "smartwatch", "reloj inteligente"], "178893"),
-        (["wireless charger", "cargador inalámbrico"], "183071"),
-        (["security camera", "camara seguridad", "cámara de seguridad"], "114722"),
-        # ── Hogar ──
-        (["gaming chair", "silla gaming", "office chair", "silla de oficina"], "20625"),
-        (["standing desk", "escritorio"], "23347"),
-        (["air purifier", "purificador de aire"], "43514"),
-        (["coffee maker", "cafetera"], "20676"),
-        (["vacuum cleaner", "aspiradora"], "43569"),
-        # ── Herramientas ──
-        (["power drill", "taladro", "drill bit"], "631"),
-        (["wrench", "llave inglesa", "socket set"], "631"),
-    ]
-    
-    for keywords, cat_id in MAPA_CATEGORIAS:
-        if any(kw in texto for kw in keywords):
-            return cat_id
-    
-    return ""
 def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set(), bullets: list = [], descripcion: str = "", forzar_tree_id: str = None) -> str:
-    
-    # PASO 1: Detección por keywords (fuente más confiable, sin APIs)
-    # Usar título + bullets + descripción para máxima cobertura
-    cat_rapida = detectar_categoria_por_keywords(titulo, bullets)
-    if cat_rapida and cat_rapida not in excluir:
-        st.success(f"⚡ Categoría detectada por keywords: `{cat_rapida}`")
-        return cat_rapida
-    
-    # PASO 2: Si no hubo match por keywords, intentar Taxonomy API
     from urllib.parse import quote
     import base64
     import re as _re
 
     def limpiar_query(texto: str) -> str:
-        # Eliminar emojis, caracteres unicode especiales, brackets japoneses, etc.
         texto = _re.sub(r'[^\x00-\x7F\u00C0-\u024F\u00C0-\u017E]', ' ', texto)
-        # Eliminar símbolos sueltos como 【】〔〕「」
         texto = _re.sub(r'[【】〔〕「」『』（）［］｛｝]', ' ', texto)
-        # Eliminar múltiples espacios
         texto = _re.sub(r'\s+', ' ', texto).strip()
         return texto
 
-    # Usar el título de eBay en español directamente (eBay lo soporta)
     query_taxonomy = limpiar_query(titulo)
     st.info(f"🔍 Taxonomy query: '{query_taxonomy[:80]}'")
 
-    # Obtener App Token
     try:
         app_id  = st.secrets["ebay"]["app_id"]
         cert_id = st.secrets["ebay"]["cert_id"]
@@ -203,19 +130,7 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         return ""
 
     headers_tax = {"Authorization": f"Bearer {app_token}", "Accept": "application/json"}
-
-    # Determinar tree_id
-    if forzar_tree_id:
-        tree_id = forzar_tree_id
-        st.info(f"🚗 Tree ID forzado: {tree_id}")
-    else:
-        KEYWORDS_MOTORS = ["mirror","espejo","retrovisor","bumper","fender","headlight",
-                           "taillight","faro","parachoque","brake","freno","rotor","strut",
-                           "shock","alternator","radiator","chevy","ford","toyota","honda",
-                           "gmc","dodge","chevrolet","passenger side","driver side"]
-        texto_check = (titulo + " " + " ".join(bullets[:2])).lower()
-        es_autoparte = any(kw in texto_check for kw in KEYWORDS_MOTORS)
-        tree_id = "100" if es_autoparte else "0"
+    tree_id = forzar_tree_id if forzar_tree_id else "0"
 
     try:
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(query_taxonomy)}"
@@ -223,19 +138,9 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         if r_sug.status_code != 200:
             return ""
 
-        CATEGORIAS_INVALIDAS = {
-            "12","20081","550","625","30090","30097","1","64482","15724",
-            "11450","2984","6000","4","353","11233","15709","99697",
-            "260308","20710","50445","14936","3270","175716",
-            "45794",  # Home Windows
-            "180113", # Windows & Window Hardware
-            "3187",   # Building & Hardware
-            "11700"   # Home & Garden
-        }
-
         for s in r_sug.json().get("categorySuggestions", []):
             cat_id = str(s.get("category", {}).get("categoryId", ""))
-            if cat_id and cat_id not in excluir and cat_id not in CATEGORIAS_INVALIDAS:
+            if cat_id and cat_id not in excluir:
                 st.success(f"✅ TAXONOMY: `{cat_id}` ({s.get('category',{}).get('categoryName','')})")
                 return cat_id
     except Exception as e:
@@ -628,22 +533,6 @@ def publicar_en_ebay(
     titulo_prev = producto.get("titulo", "")
     bullets_prev = producto.get("bullets_amazon", [])
 
-    BLACKLIST_CATEGORIAS = {
-        "122773",  # Eye Drops & Wash
-        "31414",   # Vision Care
-        "26395",   # Health & Beauty
-        "15709",   # Athletic Shoes
-        "99697",   # Washer & Dryer Parts
-        "45794",   # Home Windows
-        "12",      # Other Antiques
-        "50445",   # Decals & Vinyls
-        "14936",   # Car Speakers
-        "6007",    # eBay Motors ROOT subcategory genérica
-        "6005",    # eBay Motors ROOT subcategory genérica
-        "6006",    # eBay Motors ROOT subcategory genérica
-    }
-
-    # DIAGNÓSTICO
     st.info(f"📋 Título eBay: '{titulo_prev}'")
     st.info(f"📋 Categoría original: '{producto['category_id']}'")
 
@@ -668,19 +557,8 @@ def publicar_en_ebay(
                 producto["category_id"] = cat_taxonomy
                 st.success(f"✅ Categoría corregida: `{cat_taxonomy}`")
     else:
-        # Si es_motors=False → no tocar nada, respetar categoría original del Cazador
+        marketplace_id = "EBAY_US"
         st.info(f"🛒 Marketplace: {marketplace_id}")
-        # Solo corregir si la categoría original está en blacklist
-        if str(producto["category_id"]) in BLACKLIST_CATEGORIAS:
-            st.warning(f"⚠️ Categoría `{producto['category_id']}` en blacklist. Buscando alternativa...")
-            cat_taxonomy = obtener_categoria_hoja_taxonomy(
-                titulo_prev, tienda_id, marketplace_id,
-                excluir=BLACKLIST_CATEGORIAS,
-                bullets=bullets_prev
-            )
-            if cat_taxonomy:
-                producto["category_id"] = cat_taxonomy
-                st.success(f"✅ Categoría corregida: `{cat_taxonomy}`")
 
 
     categorias_intentadas = set()
