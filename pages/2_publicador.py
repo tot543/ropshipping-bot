@@ -16,7 +16,7 @@ import re
 from datetime import datetime, timezone
 from urllib.parse import quote
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.ebay_auth import get_valid_token, refresh_access_token
+from utils.ebay_auth import get_valid_token, refresh_access_token, get_app_token
 st.set_page_config(page_title="Publicador Automático | eBay Hub", page_icon="🚀", layout="wide")
 EBAY_INVENTORY_BASE_URL  = "https://api.ebay.com/sell/inventory/v1"
 EBAY_ACCOUNT_BASE_URL    = "https://api.ebay.com/sell/account/v1"
@@ -76,9 +76,12 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     Retorna una cadena formateada con las sugerencias para pasarle a la IA.
     """
     try:
+        app_token = get_app_token()
+        headers = construir_headers_ebay(app_token, marketplace_id)
+        
         # 1. Obtener el ID del árbol de categorías para el marketplace
         url_tree = f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}"
-        resp_tree = hacer_peticion_con_reintento("GET", url_tree, tienda_id)
+        resp_tree = requests.get(url_tree, headers=headers, timeout=15)
         if resp_tree.status_code != 200:
             return ""
         
@@ -87,7 +90,7 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
             return ""
         # 2. Obtener sugerencias basadas en el título
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
-        resp_sug = hacer_peticion_con_reintento("GET", url_sug, tienda_id)
+        resp_sug = requests.get(url_sug, headers=headers, timeout=15)
         
         if resp_sug.status_code == 200:
             suggestions = resp_sug.json().get("categorySuggestions", [])
@@ -105,15 +108,17 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
     Omite cualquier ID que esté en el set `excluir`.
     """
     try:
+        app_token = get_app_token()
+        headers = construir_headers_ebay(app_token, marketplace_id)
         url_tree = f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}"
-        resp_tree = hacer_peticion_con_reintento("GET", url_tree, tienda_id)
+        resp_tree = requests.get(url_tree, headers=headers, timeout=15)
         if resp_tree.status_code != 200:
             return ""
         tree_id = resp_tree.json().get("categoryTreeId", "")
         if not tree_id:
             return ""
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
-        resp_sug = hacer_peticion_con_reintento("GET", url_sug, tienda_id)
+        resp_sug = requests.get(url_sug, headers=headers, timeout=15)
         if resp_sug.status_code != 200:
             return ""
         for s in resp_sug.json().get("categorySuggestions", []):
