@@ -8,6 +8,8 @@ Incluye Promoted Listings Standard (Sell Marketing API) y Stock Dinámico.
 """
 import sys
 import os
+# Asegurar que el directorio raíz esté en el path para importar utils
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import uuid
 import json
 import streamlit as st
@@ -15,7 +17,6 @@ import requests
 import re
 from datetime import datetime, timezone
 from urllib.parse import quote
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.ebay_auth import get_valid_token, refresh_access_token, get_app_token
 st.set_page_config(page_title="Publicador Automático | eBay Hub", page_icon="🚀", layout="wide")
 EBAY_INVENTORY_BASE_URL  = "https://api.ebay.com/sell/inventory/v1"
