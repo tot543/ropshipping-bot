@@ -183,7 +183,7 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
 
     # Usar el título de eBay en español directamente (eBay lo soporta)
     query_taxonomy = limpiar_query(titulo)[:100]
-    st.info(f"🔍 Query Taxonomy: '{query_taxonomy[:60]}'")
+    st.info(f"🔍 Taxonomy query: '{query_taxonomy[:80]}'")
 
     # Obtener App Token
     try:
@@ -614,17 +614,40 @@ def publicar_en_ebay(
     marketplace_id = producto.get("marketplace_id") or config_tienda.get("site_id", "EBAY_US")
     
     # Corrección preventiva de categoría por keywords ANTES de publicar
-    bullets_preventivo = producto.get("bullets_amazon", [])
-    cat_preventiva = detectar_categoria_por_keywords(producto.get("titulo", ""), bullets_preventivo)
-    if cat_preventiva:
-        if cat_preventiva != str(producto["category_id"]):
-            st.info(f"⚡ Categoría pre-corregida por keywords: `{producto['category_id']}` → `{cat_preventiva}`")
-        producto["category_id"] = cat_preventiva
+    titulo_prev = producto.get("titulo", "")
+    bullets_prev = producto.get("bullets_amazon", [])
+    cat_keywords = detectar_categoria_por_keywords(titulo_prev, bullets_prev)
 
-    # Ajustar marketplace según categoría detectada
+    if cat_keywords:
+        # Validar con Taxonomy API usando el título español de eBay
+        cat_taxonomy = obtener_categoria_hoja_taxonomy(
+            titulo_prev, tienda_id, marketplace_id,
+            excluir=set(),
+            bullets=bullets_prev
+        )
+        if cat_taxonomy:
+            st.info(f"⚡ Keywords sugirió `{cat_keywords}`, Taxonomy confirmó `{cat_taxonomy}`")
+            producto["category_id"] = cat_taxonomy
+        else:
+            st.info(f"⚡ Usando categoría por keywords: `{cat_keywords}`")
+            producto["category_id"] = cat_keywords
+    elif str(producto["category_id"]) not in CATEGORIAS_EBAY_MOTORS:
+        # Si no hay match por keywords, igual consultar Taxonomy preventivamente
+        cat_taxonomy = obtener_categoria_hoja_taxonomy(
+            titulo_prev, tienda_id, marketplace_id,
+            excluir=set(),
+            bullets=bullets_prev
+        )
+        if cat_taxonomy:
+            st.info(f"🔍 Categoría corregida por Taxonomy: `{cat_taxonomy}`")
+            producto["category_id"] = cat_taxonomy
+
+    # Ajustar marketplace según categoría final
     if es_categoria_motors(str(producto["category_id"])):
         marketplace_id = "EBAY_MOTORS"
-        st.info("🚗 Marketplace ajustado a EBAY_MOTORS por categoría de autopartes")
+        st.info("🚗 Marketplace: EBAY_MOTORS")
+    else:
+        st.info(f"🛒 Marketplace: {marketplace_id}")
 
     categorias_intentadas = set()
     while intento_global < max_reintentos_globales:
