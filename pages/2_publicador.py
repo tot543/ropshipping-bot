@@ -106,27 +106,38 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
     """
     try:
         app_token = get_app_token()
-        headers = construir_headers_ebay(app_token, marketplace_id)
+        if not app_token:
+            st.warning("❌ DIAGNÓSTICO: No se pudo obtener Application Token. Verifica app_id y cert_id en secrets.")
+            return ""
+        headers_tax = construir_headers_ebay(app_token, marketplace_id)
         url_tree = f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}"
-        resp_tree = requests.get(url_tree, headers=headers, timeout=15)
+        resp_tree = requests.get(url_tree, headers=headers_tax, timeout=10)
         if resp_tree.status_code != 200:
+            st.warning(f"❌ DIAGNÓSTICO Tree: status={resp_tree.status_code} body={resp_tree.text[:200]}")
             return ""
         tree_id = resp_tree.json().get("categoryTreeId", "")
         if not tree_id:
+            st.warning("❌ DIAGNÓSTICO: categoryTreeId vino vacío en la respuesta.")
             return ""
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
-        resp_sug = requests.get(url_sug, headers=headers, timeout=15)
+        resp_sug = requests.get(url_sug, headers=headers_tax, timeout=10)
         if resp_sug.status_code != 200:
+            st.warning(f"❌ DIAGNÓSTICO Suggestions: status={resp_sug.status_code} body={resp_sug.text[:200]}")
             return ""
-        for s in resp_sug.json().get("categorySuggestions", []):
+        sugerencias = resp_sug.json().get("categorySuggestions", [])
+        if not sugerencias:
+            st.warning(f"❌ DIAGNÓSTICO: Taxonomy respondió 200 pero lista vacía. URL usada: {url_sug[:150]}")
+            return ""
+        for s in sugerencias:
             cat = s.get("category", {})
             cat_id = str(cat.get("categoryId", ""))
             cat_nombre = cat.get("categoryName", "")
             if cat_id and cat_id not in excluir:
                 st.info(f"🔍 Taxonomy API → `{cat_id}` ({cat_nombre})")
                 return cat_id
+        st.warning(f"❌ DIAGNÓSTICO: Todas las sugerencias de Taxonomy están en la lista de excluidas: {excluir}")
     except Exception as e:
-        print(f"DEBUG TAXONOMY DIRECTA | Error: {e}")
+        st.warning(f"❌ DIAGNÓSTICO TAXONOMY DIRECTA | Excepción: {e}")
     return ""
 def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "", bullets: list = [], excluir_categorias: set = set()) -> str:
     """
