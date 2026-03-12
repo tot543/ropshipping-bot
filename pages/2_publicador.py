@@ -158,7 +158,7 @@ def detectar_categoria_por_keywords(titulo: str, bullets: list = []) -> str:
             return cat_id
     
     return ""
-def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set(), bullets: list = [], descripcion: str = "") -> str:
+def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set(), bullets: list = [], descripcion: str = "", forzar_tree_id: str = None) -> str:
     
     # PASO 1: Detección por keywords (fuente más confiable, sin APIs)
     # Usar título + bullets + descripción para máxima cobertura
@@ -204,14 +204,18 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
 
     headers_tax = {"Authorization": f"Bearer {app_token}", "Accept": "application/json"}
 
-    # Detectar si es autoparte para usar tree 100
-    KEYWORDS_MOTORS = ["mirror","espejo","retrovisor","bumper","fender","headlight",
-                       "taillight","faro","parachoque","brake","freno","rotor","strut",
-                       "shock","alternator","radiator","chevy","ford","toyota","honda",
-                       "gmc","dodge","chevrolet","passenger side","driver side"]
-    texto_check = (titulo + " " + " ".join(bullets[:2])).lower()
-    es_autoparte = any(kw in texto_check for kw in KEYWORDS_MOTORS)
-    tree_id = "100" if es_autoparte else "0"
+    # Determinar tree_id
+    if forzar_tree_id:
+        tree_id = forzar_tree_id
+        st.info(f"🚗 Tree ID forzado: {tree_id}")
+    else:
+        KEYWORDS_MOTORS = ["mirror","espejo","retrovisor","bumper","fender","headlight",
+                           "taillight","faro","parachoque","brake","freno","rotor","strut",
+                           "shock","alternator","radiator","chevy","ford","toyota","honda",
+                           "gmc","dodge","chevrolet","passenger side","driver side"]
+        texto_check = (titulo + " " + " ".join(bullets[:2])).lower()
+        es_autoparte = any(kw in texto_check for kw in KEYWORDS_MOTORS)
+        tree_id = "100" if es_autoparte else "0"
 
     try:
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(query_taxonomy)}"
@@ -610,7 +614,7 @@ def publicar_en_ebay(
     # Prioridad al marketplace detectado por el Cazador
     marketplace_id = producto.get("marketplace_id") or config_tienda.get("site_id", "EBAY_US")
     
-    # Corrección preventiva de categoría por keywords ANTES de publicar
+    # Corrección preventiva de categoría ANTES de publicar
     titulo_prev = producto.get("titulo", "")
     bullets_prev = producto.get("bullets_amazon", [])
 
@@ -629,46 +633,40 @@ def publicar_en_ebay(
         "6006",    # eBay Motors ROOT subcategory genérica
     }
 
-    # DIAGNÓSTICO 1 — mostrar título completo que se usará
-    st.info(f"📋 Título eBay para Taxonomy: '{titulo_prev}'")
-    st.info(f"📋 Categoría original del producto: '{producto['category_id']}'")
+    # DIAGNÓSTICO
+    st.info(f"📋 Título eBay: '{titulo_prev}'")
+    st.info(f"📋 Categoría original: '{producto['category_id']}'")
 
-    # Si la categoría original ya es inválida, buscar con Taxonomy ignorándola
-    if str(producto["category_id"]) in BLACKLIST_CATEGORIAS:
-        st.warning(f"⚠️ Categoría original `{producto['category_id']}` está en blacklist. Forzando búsqueda...")
-        cat_taxonomy = obtener_categoria_hoja_taxonomy(
-            titulo_prev, tienda_id, marketplace_id,
-            excluir=BLACKLIST_CATEGORIAS,  # excluir toda la blacklist
-            bullets=bullets_prev
-        )
-    else:
-        cat_taxonomy = obtener_categoria_hoja_taxonomy(
-            titulo_prev, tienda_id, marketplace_id,
-            excluir=set(),
-            bullets=bullets_prev
-        )
+    es_motors = st.session_state.get("es_motors", False)
 
-    cat_keywords = detectar_categoria_por_keywords(titulo_prev, bullets_prev)
-    st.info(f"🔑 Keywords detectó: '{cat_keywords}' (vacío = no hubo match)")
-
-    st.info(f"🌐 Taxonomy devolvió: '{cat_taxonomy}' (vacío = sin resultados)")
-
-    # Decidir categoría final
-    if cat_taxonomy:
-        producto["category_id"] = cat_taxonomy
-        st.success(f"✅ Categoría final (Taxonomy): `{cat_taxonomy}`")
-    elif cat_keywords:
-        producto["category_id"] = cat_keywords
-        st.success(f"✅ Categoría final (keywords): `{cat_keywords}`")
-    else:
-        st.warning(f"⚠️ Sin corrección. Usando categoría original: `{producto['category_id']}`")
-
-    # Ajustar marketplace
-    if es_categoria_motors(str(producto["category_id"])):
+    if es_motors:
         marketplace_id = "EBAY_MOTORS"
-        st.info("🚗 Marketplace: EBAY_MOTORS")
+        st.info("🚗 Marketplace: EBAY_MOTORS (activado por usuario)")
+        # Corregir categoría con Taxonomy árbol 100
+        cat_taxonomy = obtener_categoria_hoja_taxonomy(
+            titulo_prev, tienda_id, "EBAY_MOTORS",
+            excluir={str(producto["category_id"])},
+            bullets=bullets_prev,
+            forzar_tree_id="100"
+        )
+        if cat_taxonomy:
+            producto["category_id"] = cat_taxonomy
+            st.success(f"✅ Categoría Motors: `{cat_taxonomy}`")
     else:
+        # Si es_motors=False → no tocar nada, respetar categoría original del Cazador
         st.info(f"🛒 Marketplace: {marketplace_id}")
+        # Solo corregir si la categoría original está en blacklist
+        if str(producto["category_id"]) in BLACKLIST_CATEGORIAS:
+            st.warning(f"⚠️ Categoría `{producto['category_id']}` en blacklist. Buscando alternativa...")
+            cat_taxonomy = obtener_categoria_hoja_taxonomy(
+                titulo_prev, tienda_id, marketplace_id,
+                excluir=BLACKLIST_CATEGORIAS,
+                bullets=bullets_prev
+            )
+            if cat_taxonomy:
+                producto["category_id"] = cat_taxonomy
+                st.success(f"✅ Categoría corregida: `{cat_taxonomy}`")
+
 
     categorias_intentadas = set()
     while intento_global < max_reintentos_globales:
@@ -1104,7 +1102,17 @@ def main() -> None:
         else:
             ad_rate_pct = 12.0
     st.divider()
-    # ── Botón Principal ──────────────────────────────────
+    # ── Toggle eBay Motors ───────────────────────────────────────
+    es_motors = st.toggle(
+        "🚗 Producto de eBay Motors (autopartes)",
+        value=False,
+        help="Activa esto si el producto es una autoparte. Usa el árbol de categorías eBay Motors (tree_id=100) y ajusta el marketplace automáticamente."
+    )
+    st.session_state["es_motors"] = es_motors
+    if es_motors:
+        st.info("🚗 Modo Motors activo: se usará tree_id=100 y marketplaceId=EBAY_MOTORS")
+    st.divider()
+    # ── Botón Principal ────────────────────────────────────────────
     col_btn, _ = st.columns([1, 3])
     with col_btn:
         botton_pub = st.button("🚀 Publicar en eBay AHORA", type="primary", use_container_width=True)
