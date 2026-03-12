@@ -169,15 +169,31 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
             st.warning("❌ DIAGNÓSTICO: No se pudo obtener Application Token. Verifica app_id y cert_id en secrets.")
             return ""
         headers_tax = construir_headers_ebay(app_token, marketplace_id)
-        url_tree = f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}"
-        resp_tree = requests.get(url_tree, headers=headers_tax, timeout=10)
-        if resp_tree.status_code != 200:
-            st.warning(f"❌ DIAGNÓSTICO Tree: status={resp_tree.status_code} body={resp_tree.text[:200]}")
-            return ""
-        tree_id = resp_tree.json().get("categoryTreeId", "")
-        if not tree_id:
-            st.warning("❌ DIAGNÓSTICO: categoryTreeId vino vacío en la respuesta.")
-            return ""
+        # Para autopartes, usar directamente tree_id=100 (eBay Motors)
+        # Para otros productos, usar el tree_id del marketplace
+        KEYWORDS_MOTORS = [
+            "mirror", "espejo", "retrovisor", "bumper", "fender", "headlight",
+            "taillight", "faro", "parachoque", "hood", "door handle", "brake",
+            "freno", "rotor", "strut", "shock", "alternator", "radiator",
+            "chevy", "ford", "toyota", "honda", "gmc", "dodge", "chevrolet",
+            "passenger side", "driver side", "oem part", "replacement part",
+            "auto part", "car part", "vehicle", "truck", "van"
+        ]
+        texto_check = (titulo + " " + " ".join(bullets[:2])).lower()
+        es_autoparte = any(kw in texto_check for kw in KEYWORDS_MOTORS)
+        if es_autoparte:
+            tree_id = "100"  # eBay Motors Parts & Accessories
+            st.info("🚗 Usando árbol de categorías eBay Motors (tree_id=100)")
+        else:
+            r_tree = requests.get(
+                f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}",
+                headers=headers_tax, timeout=10
+            )
+            if r_tree.status_code != 200:
+                st.error(f"❌ TAXONOMY Tree error {r_tree.status_code}: {r_tree.text[:200]}")
+                return ""
+            tree_id = str(r_tree.json().get("categoryTreeId", ""))
+            st.info(f"✅ TAXONOMY: Tree ID = {tree_id}")
         # Construir texto base desde Amazon (más descriptivo que el título de eBay)
         texto_amazon = ""
         if bullets:
