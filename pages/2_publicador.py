@@ -170,13 +170,28 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
     # PASO 2: Si no hubo match por keywords, intentar Taxonomy API
     from urllib.parse import quote
     import base64
+    import re as _re
+
+    def limpiar_query(texto: str) -> str:
+        # Eliminar emojis, caracteres unicode especiales, brackets japoneses, etc.
+        texto = _re.sub(r'[^\x00-\x7F\u00C0-\u024F\u00C0-\u017E]', ' ', texto)
+        # Eliminar símbolos sueltos como 【】〔〕「」
+        texto = _re.sub(r'[【】〔〕「」『』（）［］｛｝]', ' ', texto)
+        # Eliminar múltiples espacios
+        texto = _re.sub(r'\s+', ' ', texto).strip()
+        return texto
+
     # Usar directamente el título original (eBay soporta español en Taxonomy API)
     # Igual que cuando el vendedor escribe el título manualmente en el formulario de eBay
     if bullets:
         # Preferir el primer bullet de Amazon (más descriptivo del producto)
-        query_taxonomy = bullets[0][:100] if isinstance(bullets, list) and bullets else ""
+        query_taxonomy = limpiar_query(bullets[0])[:100] if isinstance(bullets, list) and bullets else ""
     else:
-        query_taxonomy = titulo[:100]
+        query_taxonomy = limpiar_query(titulo)[:100]
+
+    # Si después de limpiar queda vacío o muy corto, usar el título
+    if len(query_taxonomy) < 5:
+        query_taxonomy = limpiar_query(titulo)[:100]
 
     st.info(f"🔍 Query Taxonomy: '{query_taxonomy[:60]}...'")
 
@@ -490,6 +505,7 @@ def construir_payload_oferta(
     precio_sugerido = float(producto.get("precio_sugerido", producto["precio_ebay"]))
     return {
         "sku":               sku,
+        "listingTitle":      str(producto.get("titulo", ""))[:80],
         "marketplaceId":     marketplace_id,
         "format":            "FIXED_PRICE",
         "availableQuantity": cantidad,
