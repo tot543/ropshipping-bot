@@ -170,58 +170,15 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
     # PASO 2: Si no hubo match por keywords, intentar Taxonomy API
     from urllib.parse import quote
     import base64
-    
-    # Construir query desde bullets (más descriptivos que el título)
+    # Usar directamente el título original (eBay soporta español en Taxonomy API)
+    # Igual que cuando el vendedor escribe el título manualmente en el formulario de eBay
     if bullets:
-        query_base = bullets[0][:80] if isinstance(bullets, list) and bullets else ""
-    elif descripcion:
-        query_base = descripcion[:80]
+        # Preferir el primer bullet de Amazon (más descriptivo del producto)
+        query_taxonomy = bullets[0][:100] if isinstance(bullets, list) and bullets else ""
     else:
-        query_base = titulo
+        query_taxonomy = titulo[:100]
 
-    # Traducir con Groq solo si la query no está vacía
-    try:
-        api_key = st.secrets["groq"]["api_key"]
-        r_trad = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": "openai/gpt-oss-120b",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Extract the physical product type in English. "
-                            "2-4 words only. Focus on WHAT it IS, not brand/model/year. "
-                            "NEVER say 'part', 'component', 'replacement', 'OEM', 'accessory' alone. "
-                            "Examples: 'side mirror assembly', 'bluetooth headphones', 'gaming chair', "
-                            "'headlight assembly', 'brake rotor', 'door handle'. "
-                            "If unsure, say 'auto part'. Return ONLY the words."
-                        )
-                    },
-                    {"role": "user", "content": query_base}
-                ]
-            },
-            timeout=10
-        )
-        if r_trad.status_code == 200:
-            query_taxonomy = r_trad.json()['choices'][0]['message']['content'].strip().strip('"')
-        else:
-            query_taxonomy = " ".join(titulo.split()[:4])
-    except Exception:
-        query_taxonomy = " ".join(titulo.split()[:4])
-
-    # Si Groq devuelve algo genérico, usar fallback directo
-    QUERIES_INVALIDAS = {
-        "", "part", "component", "replacement", "oem", "accessory",
-        "unspecified part", "automotive oem component", "oem replacement part",
-        "auto part", "car part", "replacement part", "oem part"
-    }
-    if query_taxonomy.lower() in QUERIES_INVALIDAS or len(query_taxonomy) < 4:
-        st.warning(f"⚠️ Query Groq inválida ('{query_taxonomy}'). Saltando Taxonomy API.")
-        return ""
-
-    st.info(f"🌐 Query Taxonomy: '{query_taxonomy}'")
+    st.info(f"🔍 Query Taxonomy: '{query_taxonomy[:60]}...'")
 
     # Obtener App Token
     try:
