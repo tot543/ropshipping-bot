@@ -99,10 +99,11 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     except Exception as e:
         print(f"DEBUG TAXONOMY | Error: {e}")
     return ""
-def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set()) -> str:
+def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set(), bullets: list = [], descripcion: str = "") -> str:
     """
     Consulta Taxonomy API y devuelve directamente el categoryId más relevante.
     Omite cualquier ID que esté en el set `excluir`.
+    Usa bullets de Amazon (en inglés) para construir la query si están disponibles.
     """
     try:
         app_token = get_app_token()
@@ -119,29 +120,15 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         if not tree_id:
             st.warning("❌ DIAGNÓSTICO: categoryTreeId vino vacío en la respuesta.")
             return ""
-        # Traducir título al inglés para la Taxonomy API
-        try:
-            api_key = st.secrets["groq"]["api_key"]
-            r_trad = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "openai/gpt-oss-120b",
-                    "messages": [
-                        {"role": "system", "content": "Translate the product title to English. Return ONLY the translated title, nothing else. Max 8 words."},
-                        {"role": "user", "content": titulo}
-                    ]
-                },
-                timeout=10
-            )
-            if r_trad.status_code == 200:
-                titulo_en = r_trad.json()['choices'][0]['message']['content'].strip()
-                st.info(f"🌐 Título traducido para Taxonomy: '{titulo_en}'")
-            else:
-                titulo_en = titulo
-        except Exception:
-            titulo_en = titulo
-        titulo_corto = " ".join(titulo_en.split()[:6])
+        # Prioridad: usar bullets de Amazon (inglés, descriptivos) para la query
+        if bullets:
+            primer_bullet = bullets[0] if bullets else ""
+            titulo_corto = " ".join(titulo.split()[:4])
+            query_taxonomy = f"{titulo_corto} {primer_bullet}"[:100]
+        else:
+            query_taxonomy = " ".join(titulo.split()[:6])
+        st.info(f"🔍 Query Taxonomy: '{query_taxonomy}'")
+        titulo_corto = query_taxonomy
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo_corto)}"
         resp_sug = requests.get(url_sug, headers=headers_tax, timeout=10)
         if resp_sug.status_code != 200:
@@ -569,7 +556,12 @@ def publicar_en_ebay(
                     categorias_intentadas.add(str(producto["category_id"]))
                     
                     # Primero: intentar con Taxonomy API directamente (más confiable)
-                    nueva_cat = obtener_categoria_hoja_taxonomy(titulo, tienda_id, marketplace_id, excluir=categorias_intentadas)
+                    nueva_cat = obtener_categoria_hoja_taxonomy(
+                        titulo, tienda_id, marketplace_id,
+                        excluir=categorias_intentadas,
+                        bullets=bullets,
+                        descripcion=producto.get("descripcion_amazon", "")
+                    )
                     
                     # Segundo: si Taxonomy no devuelve nada, usar IA como fallback
                     if not nueva_cat:
@@ -670,7 +662,12 @@ def publicar_en_ebay(
                     categorias_intentadas.add(str(producto["category_id"]))
                     
                     # Primero: intentar con Taxonomy API directamente (más confiable)
-                    nueva_cat = obtener_categoria_hoja_taxonomy(titulo, tienda_id, marketplace_id, excluir=categorias_intentadas)
+                    nueva_cat = obtener_categoria_hoja_taxonomy(
+                        titulo, tienda_id, marketplace_id,
+                        excluir=categorias_intentadas,
+                        bullets=bullets,
+                        descripcion=producto.get("descripcion_amazon", "")
+                    )
                     
                     # Segundo: si Taxonomy no devuelve nada, usar IA como fallback
                     if not nueva_cat:
