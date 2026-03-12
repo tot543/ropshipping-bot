@@ -98,6 +98,33 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
     except Exception as e:
         print(f"DEBUG TAXONOMY | Error: {e}")
     return ""
+def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set()) -> str:
+    """
+    Consulta Taxonomy API y devuelve directamente el categoryId más relevante.
+    Omite cualquier ID que esté en el set `excluir`.
+    """
+    try:
+        url_tree = f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}"
+        resp_tree = hacer_peticion_con_reintento("GET", url_tree, tienda_id)
+        if resp_tree.status_code != 200:
+            return ""
+        tree_id = resp_tree.json().get("categoryTreeId", "")
+        if not tree_id:
+            return ""
+        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_suggestion?q={titulo}"
+        resp_sug = hacer_peticion_con_reintento("GET", url_sug, tienda_id)
+        if resp_sug.status_code != 200:
+            return ""
+        for s in resp_sug.json().get("categorySuggestions", []):
+            cat = s.get("category", {})
+            cat_id = str(cat.get("categoryId", ""))
+            cat_nombre = cat.get("categoryName", "")
+            if cat_id and cat_id not in excluir:
+                st.info(f"🔍 Taxonomy API → `{cat_id}` ({cat_nombre})")
+                return cat_id
+    except Exception as e:
+        print(f"DEBUG TAXONOMY DIRECTA | Error: {e}")
+    return ""
 def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "", bullets: list = [], excluir_categorias: set = set()) -> str:
     """
     Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
@@ -452,7 +479,7 @@ def publicar_en_ebay(
     promocionar: bool = False,
     ad_rate_pct: float = 12.0
 ) -> tuple[bool, str]:
-    max_reintentos_globales = 3
+    max_reintentos_globales = 5
     intento_global = 0
     # Prioridad al marketplace detectado por el Cazador
     marketplace_id = producto.get("marketplace_id") or config_tienda.get("site_id", "EBAY_US")
@@ -501,16 +528,25 @@ def publicar_en_ebay(
                 errores = req_offer.json().get("errors", [])
                 # 1. Error de Categoría (25005)
                 if any(err.get("errorId") == 25005 for err in errores):
-                    with st.spinner("🔍 Consultando Taxonomy API de eBay..."):
+                    st.warning("⚠️ Categoría inválida (25005). Consultando Taxonomy API...")
+                    categorias_intentadas.add(str(producto["category_id"]))
+                    
+                    # Primero: intentar con Taxonomy API directamente (más confiable)
+                    nueva_cat = obtener_categoria_hoja_taxonomy(titulo, tienda_id, marketplace_id, excluir=categorias_intentadas)
+                    
+                    # Segundo: si Taxonomy no devuelve nada, usar IA como fallback
+                    if not nueva_cat:
+                        st.warning("⚠️ Taxonomy API sin resultados. Usando IA como fallback...")
                         sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        with st.spinner("🧠 IA eligiendo la mejor categoría oficial..."):
-                            categorias_intentadas.add(str(producto["category_id"]))
-                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, bullets=bullets, excluir_categorias=categorias_intentadas)
-                            if nueva_cat:
-                                st.warning(f"🔄 Categoría rectificada: `{nueva_cat}`. Probando con SKU fresco...")
-                                producto["category_id"] = nueva_cat
-                                intento_global += 1
-                                continue
+                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, bullets=bullets, excluir_categorias=categorias_intentadas)
+                    
+                    if nueva_cat:
+                        st.warning(f"🔄 Categoría corregida: `{nueva_cat}`. Reintentando...")
+                        producto["category_id"] = nueva_cat
+                        intento_global += 1
+                        continue
+                    else:
+                        return False, "❌ Error 25005: No se encontró una categoría válida tras agotar todas las estrategias."
                 
                 # 2. Error de Cantidad (25006)
                 if any(err.get("errorId") == 25006 for err in errores):
@@ -593,16 +629,25 @@ def publicar_en_ebay(
                 errores = req_publish.json().get("errors", [])
                 # 1. Error de Categoría (25005)
                 if any(err.get("errorId") == 25005 for err in errores):
-                    with st.spinner("🔍 Consultando Taxonomy API (desde Publish)..."):
+                    st.warning("⚠️ Categoría inválida (25005). Consultando Taxonomy API...")
+                    categorias_intentadas.add(str(producto["category_id"]))
+                    
+                    # Primero: intentar con Taxonomy API directamente (más confiable)
+                    nueva_cat = obtener_categoria_hoja_taxonomy(titulo, tienda_id, marketplace_id, excluir=categorias_intentadas)
+                    
+                    # Segundo: si Taxonomy no devuelve nada, usar IA como fallback
+                    if not nueva_cat:
+                        st.warning("⚠️ Taxonomy API sin resultados. Usando IA como fallback...")
                         sugerencias = obtener_sugerencias_ebay_taxonomy(titulo, tienda_id, marketplace_id)
-                        with st.spinner("🧠 IA rectificando categoría..."):
-                            categorias_intentadas.add(str(producto["category_id"]))
-                            nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, bullets=bullets, excluir_categorias=categorias_intentadas)
-                            if nueva_cat:
-                                st.warning(f"🔄 Rectificando a `{nueva_cat}` con SKU fresco...")
-                                producto["category_id"] = nueva_cat
-                                intento_global += 1
-                                continue
+                        nueva_cat = interpretar_error_categoria_ia(titulo, marketplace_id, sugerencias, bullets=bullets, excluir_categorias=categorias_intentadas)
+                    
+                    if nueva_cat:
+                        st.warning(f"🔄 Categoría corregida: `{nueva_cat}`. Reintentando...")
+                        producto["category_id"] = nueva_cat
+                        intento_global += 1
+                        continue
+                    else:
+                        return False, "❌ Error 25005: No se encontró una categoría válida tras agotar todas las estrategias."
                 
                 # 2. Error de Cantidad (25006)
                 if any(err.get("errorId") == 25006 for err in errores):
