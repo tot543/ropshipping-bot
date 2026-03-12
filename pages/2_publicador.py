@@ -864,7 +864,18 @@ def publicar_en_ebay(
                             continue
                         else:
                             return False, "❌ Error 25002: No se pudieron completar los Item Specifics requeridos."
-            
+            # Manejo de error 500 — eBay server error (25001)
+            if req_publish.status_code == 500:
+                try:
+                    errores_500 = req_publish.json().get("errors", [])
+                except Exception:
+                    errores_500 = []
+                if any(err.get("errorId") == 25001 for err in errores_500):
+                    st.warning("⚠️ Error interno de eBay (25001). Reintentando en 3 segundos...")
+                    import time
+                    time.sleep(3)
+                    intento_global += 1
+                    continue
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
             
