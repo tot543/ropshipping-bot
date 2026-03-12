@@ -1,9 +1,21 @@
+import streamlit as st
+import pandas as pd
+import urllib.parse
 import sys
 import os
-import urllib.parse
-import streamlit as st
+import time
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# El root ya debe estar en el path por app.py, pero por seguridad:
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
+
+from utils.ebay_auth import get_valid_token, refresh_access_token
+from skills.ebay_orders import EbayOrdersAgent
+
+# El root ya debe estar en el path por app.py, pero por seguridad:
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
+
 from utils.ebay_auth import get_valid_token, refresh_access_token
 from skills.ebay_orders import EbayOrdersAgent
 

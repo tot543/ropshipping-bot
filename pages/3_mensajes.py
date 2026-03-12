@@ -1,5 +1,12 @@
 import streamlit as st
 import pandas as pd
+import os
+import sys
+
+# El root ya debe estar en el path por app.py, pero por seguridad:
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
+
 from utils.ebay_auth import get_valid_token
 from skills.ebay_orders import EbayOrdersAgent
 

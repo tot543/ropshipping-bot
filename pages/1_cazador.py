@@ -1,26 +1,18 @@
-"""
-pages/1_cazador.py — Cazador de Productos (Producción)
-==============================================================================
-FASE PRODUCCIÓN: Sin datos simulados. Toda la información proviene de APIs reales:
-  - eBay Browse API (OAuth) → título, precio, categoryId
-  - ScraperAPI + BeautifulSoup → precio Amazon, imágenes, bullets, descripción
-Configuración requerida en .streamlit/secrets.toml:
-  [ebay] app_id, cert_id, runame
-  [tiendas.<id>] oauth_token, refresh_token
-  [amazon] scraper_api_key
-"""
-import sys
-import os
-from pathlib import Path
-# Fix para asegurar que los módulos en el directorio raíz sean importables
-ROOT = str(Path(__file__).resolve().parent.parent)
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-import requests
 import streamlit as st
+import requests
+import re
+import os
+import sys
 from bs4 import BeautifulSoup
 from urllib.parse import quote
+
+# El root ya debe estar en el path por app.py, pero por seguridad:
+if os.getcwd() not in sys.path:
+    sys.path.append(os.getcwd())
+
 from utils.ebay_auth import get_valid_token, refresh_access_token, get_app_token
+
+st.set_page_config(page_title="Cazador | eBay Hub", page_icon="🎯", layout="wide")
 st.set_page_config(page_title="Cazador | eBay Hub", page_icon="🎯", layout="wide")
 UMBRAL_GANANCIA_MIN = 0.01  # Umbral mínimo de aprobación
 # ─────────────────────────────────────────────────────────
@@ -81,17 +73,29 @@ def extraer_datos_ebay(item_id: str, tienda_id: str) -> dict:
             category_id = id_match.group(1) if id_match else raw_id
         else:
             category_id = category_path
+<<<<<<< HEAD
+=======
+
+>>>>>>> main
     # Limpieza final: asegurarnos de que sea solo el número
     if isinstance(category_id, str):
         id_match = re.search(r"(\d+)", category_id)
         if id_match:
             category_id = id_match.group(1)
+<<<<<<< HEAD
+=======
+
+>>>>>>> main
     precio_str   = datos.get("price", {}).get("value", "0")
     precio       = float(precio_str)
     if not titulo:
         raise ValueError(f"eBay no devolvió un título para el Item ID {item_id}")
     if precio <= 0:
         raise ValueError(f"eBay devolvió un precio de $0 para el Item ID {item_id}")
+<<<<<<< HEAD
+=======
+
+>>>>>>> main
     # FIX 2 — Validar categoría con Taxonomy API para obtener la categoría hoja correcta
     try:
         app_token = get_app_token()
@@ -120,6 +124,10 @@ def extraer_datos_ebay(item_id: str, tienda_id: str) -> dict:
                             category_id = cat_id_sugerida
     except Exception as e:
         print(f"DEBUG TAXONOMY CAZADOR | Error: {e}")
+<<<<<<< HEAD
+=======
+
+>>>>>>> main
     return {
         "titulo":         titulo,
         "precio_ebay":    precio,

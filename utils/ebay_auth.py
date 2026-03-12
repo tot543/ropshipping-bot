@@ -139,3 +139,53 @@ def get_valid_token(tienda_id: str):
             
     # 2. Si llegamos aquí: no está en sesión o ya expiró -> Llamamos a la API real.
     return refresh_access_token(tienda_id)
+
+
+def get_app_token() -> str:
+    """
+    Obtiene un Application Access Token (Client Credentials) para APIs de solo lectura
+    como Taxonomy API o Browse API (búsqueda).
+    Usa caché en session_state para evitar múltiples llamadas.
+    """
+    token_key = "ebay_app_token"
+    expires_key = "ebay_app_token_expires"
+
+    # 1. Caché en sesión
+    if token_key in st.session_state and expires_key in st.session_state:
+        if time.time() < st.session_state[expires_key]:
+            return st.session_state[token_key]
+
+    # 2. Obtener nuevo token
+    try:
+        ebay_keys = st.secrets["ebay"]
+        app_id = ebay_keys["app_id"]
+        cert_id = ebay_keys["cert_id"]
+        
+        auth_str = f"{app_id}:{cert_id}"
+        b64_auth = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+        
+        url = "https://api.ebay.com/identity/v1/oauth2/token"
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {b64_auth}"
+        }
+        data = {
+            "grant_type": "client_credentials",
+            "scope": "https://api.ebay.com/oauth/api_scope"
+        }
+        
+        resp = requests.post(url, headers=headers, data=data, timeout=15)
+        resp.raise_for_status()
+        
+        token_data = resp.json()
+        token = token_data.get("access_token", "")
+        expires_in = token_data.get("expires_in", 7200)
+        
+        st.session_state[token_key] = token
+        st.session_state[expires_key] = time.time() + expires_in - 60
+        
+        return token
+    except Exception as e:
+        print(f"DEBUG APP TOKEN | Error: {e}")
+        return ""
+# v1.0.1 - Application Token Fix
