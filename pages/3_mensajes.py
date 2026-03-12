@@ -24,14 +24,23 @@ st.info(f"🏪 Viendo órdenes y mensajes de: **{tienda_cfg['nombre']}**")
 
 # Obtener token y llamar al agente
 token = get_valid_token(tienda_id)
+
+if not token:
+    st.error(f"❌ No se pudo obtener un token válido para **{tienda_id}**. Por favor, verifica la configuración o vuelve a autorizar la tienda.")
+    st.stop()
+
 agente = EbayOrdersAgent()
 
 with st.spinner("Conectando con eBay..."):
     # El agente maneja errores y devuelve una lista vacía si falla la API (ej. 503)
     ordenes = agente.get_recent_orders(token)
 
-if not ordenes:
-    st.warning("⚠️ La API de eBay no está disponible en este momento (Posible error 503) o no tienes órdenes recientes. Intenta más tarde.")
+if ordenes is None:
+    # Caso de error crítico en el agente (si decidimos que devuelva None en vez de [])
+    st.error("❌ Hubo un error al conectar con la API de eBay.")
+elif len(ordenes) == 0:
+    st.warning("📭 No tienes órdenes recientes con estado 'Pendiente' o 'En Proceso' en esta tienda.")
+    st.info("Nota: Si tienes órdenes pero ya están enviadas, no aparecerán aquí con el filtro actual.")
 else:
     # Convertir las órdenes en un DataFrame de Pandas
     df = pd.DataFrame(ordenes)

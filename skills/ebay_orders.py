@@ -60,8 +60,11 @@ class EbayOrdersAgent:
             return ordenes_procesadas
 
         except Exception as e:
-            st.error(f"DEBUG Error eBay: {str(e)} - Respuesta: {resp.text if 'resp' in locals() else 'No response'}")
-            return []
+            st.error(f"❌ Error al cargar órdenes de eBay: {str(e)}")
+            if 'resp' in locals():
+                with st.expander("Detalles del Error"):
+                    st.code(resp.text)
+            return None
 
     def get_orders_response(self, token: str, limit: int = 10) -> dict:
         if not token:
