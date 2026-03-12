@@ -120,15 +120,48 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         if not tree_id:
             st.warning("❌ DIAGNÓSTICO: categoryTreeId vino vacío en la respuesta.")
             return ""
-        # Prioridad: usar bullets de Amazon (inglés, descriptivos) para la query
+        # Construir texto base desde Amazon (más descriptivo que el título de eBay)
+        texto_amazon = ""
         if bullets:
-            primer_bullet = bullets[0] if bullets else ""
-            titulo_corto = " ".join(titulo.split()[:4])
-            query_taxonomy = f"{titulo_corto} {primer_bullet}"[:100]
-        else:
-            query_taxonomy = " ".join(titulo.split()[:6])
-        st.info(f"🔍 Query Taxonomy: '{query_taxonomy}'")
-        titulo_corto = query_taxonomy
+            texto_amazon = bullets[0][:120]
+        elif descripcion:
+            texto_amazon = descripcion[:120]
+        texto_para_traducir = texto_amazon if texto_amazon else titulo
+        # Traducir a inglés con Groq
+        try:
+            api_key = st.secrets["groq"]["api_key"]
+            r_trad = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "openai/gpt-oss-120b",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a product classifier. Extract the product type in English "
+                                "as a short search query (max 5 words) suitable for eBay category search. "
+                                "Focus on WHAT the product IS, not the brand or compatibility. "
+                                "Examples:\n"
+                                "- 'Espejo retrovisor Chevy Express' → 'car side mirror assembly'\n"
+                                "- 'Faro delantero Toyota Camry' → 'headlight assembly'\n"
+                                "- 'Audífonos inalámbricos Bluetooth' → 'wireless bluetooth headphones'\n"
+                                "Return ONLY the short query, nothing else."
+                            )
+                        },
+                        {"role": "user", "content": texto_para_traducir}
+                    ]
+                },
+                timeout=10
+            )
+            if r_trad.status_code == 200:
+                query_taxonomy = r_trad.json()['choices'][0]['message']['content'].strip().strip('"')
+                st.info(f"🌐 Query Taxonomy (IA): '{query_taxonomy}'")
+            else:
+                query_taxonomy = " ".join(titulo.split()[:5])
+        except Exception:
+            query_taxonomy = " ".join(titulo.split()[:5])
+        titulo_corto = query_taxonomy[:100]
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo_corto)}"
         resp_sug = requests.get(url_sug, headers=headers_tax, timeout=10)
         if resp_sug.status_code != 200:
@@ -138,17 +171,29 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         if not sugerencias:
             st.warning(f"❌ DIAGNÓSTICO: Taxonomy respondió 200 pero lista vacía. URL usada: {url_sug[:150]}")
             return ""
+        CATEGORIAS_INVALIDAS = {
+            "12", "20081", "550", "625", "30090", "30097", "1", "64482",
+            "15724", "11450", "2984", "6000", "4", "353", "11233"
+        }
         for s in sugerencias:
             cat = s.get("category", {})
             cat_id = str(cat.get("categoryId", ""))
             cat_nombre = cat.get("categoryName", "")
-            if cat_id and cat_id not in excluir:
-                st.info(f"🔍 Taxonomy API → `{cat_id}` ({cat_nombre})")
-                return cat_id
-        st.warning(f"❌ DIAGNÓSTICO: Todas las sugerencias de Taxonomy están en la lista de excluidas: {excluir}")
+            if not cat_id:
+                continue
+            if cat_id in excluir:
+                continue
+            if cat_id in CATEGORIAS_INVALIDAS:
+                st.warning(f"⚠️ Taxonomy sugirió categoría inválida `{cat_id}` ({cat_nombre}). Ignorando...")
+                continue
+            st.success(f"✅ TAXONOMY encontró: `{cat_id}` ({cat_nombre})")
+            return cat_id
+        st.error("❌ TAXONOMY: Todas las sugerencias fueron inválidas o excluidas.")
+        return ""
     except Exception as e:
         st.warning(f"❌ DIAGNÓSTICO TAXONOMY DIRECTA | Excepción: {e}")
     return ""
+
 def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "", bullets: list = [], excluir_categorias: set = set()) -> str:
     """
     Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
