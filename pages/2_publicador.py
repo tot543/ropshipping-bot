@@ -153,128 +153,121 @@ def detectar_categoria_por_keywords(titulo: str, bullets: list = []) -> str:
     
     return ""
 def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id: str = "EBAY_US", excluir: set = set(), bullets: list = [], descripcion: str = "") -> str:
-    """
-    Consulta Taxonomy API y devuelve directamente el categoryId más relevante.
-    Omite cualquier ID que esté en el set `excluir`.
-    Usa bullets de Amazon (en inglés) para construir la query si están disponibles.
-    """
-    # Detección rápida por keywords antes de llamar a la API
+    
+    # PASO 1: Detección por keywords (fuente más confiable, sin APIs)
+    # Usar título + bullets + descripción para máxima cobertura
     cat_rapida = detectar_categoria_por_keywords(titulo, bullets)
     if cat_rapida and cat_rapida not in excluir:
         st.success(f"⚡ Categoría detectada por keywords: `{cat_rapida}`")
         return cat_rapida
+    
+    # PASO 2: Si no hubo match por keywords, intentar Taxonomy API
+    from urllib.parse import quote
+    import base64
+    
+    # Construir query desde bullets (más descriptivos que el título)
+    if bullets:
+        query_base = bullets[0][:80] if isinstance(bullets, list) and bullets else ""
+    elif descripcion:
+        query_base = descripcion[:80]
+    else:
+        query_base = titulo
+
+    # Traducir con Groq solo si la query no está vacía
     try:
-        app_token = get_app_token()
-        if not app_token:
-            st.warning("❌ DIAGNÓSTICO: No se pudo obtener Application Token. Verifica app_id y cert_id en secrets.")
-            return ""
-        headers_tax = construir_headers_ebay(app_token, marketplace_id)
-        # Para autopartes, usar directamente tree_id=100 (eBay Motors)
-        # Para otros productos, usar el tree_id del marketplace
-        KEYWORDS_MOTORS = [
-            "mirror", "espejo", "retrovisor", "bumper", "fender", "headlight",
-            "taillight", "faro", "parachoque", "hood", "door handle", "brake",
-            "freno", "rotor", "strut", "shock", "alternator", "radiator",
-            "chevy", "ford", "toyota", "honda", "gmc", "dodge", "chevrolet",
-            "passenger side", "driver side", "oem part", "replacement part",
-            "auto part", "car part", "vehicle", "truck", "van"
-        ]
-        texto_check = (titulo + " " + " ".join(bullets[:2])).lower()
-        es_autoparte = any(kw in texto_check for kw in KEYWORDS_MOTORS)
-        if es_autoparte:
-            tree_id = "100"  # eBay Motors Parts & Accessories
-            st.info("🚗 Usando árbol de categorías eBay Motors (tree_id=100)")
+        api_key = st.secrets["groq"]["api_key"]
+        r_trad = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "openai/gpt-oss-120b",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Extract the physical product type in English. "
+                            "2-4 words only. Focus on WHAT it IS, not brand/model/year. "
+                            "NEVER say 'part', 'component', 'replacement', 'OEM', 'accessory' alone. "
+                            "Examples: 'side mirror assembly', 'bluetooth headphones', 'gaming chair', "
+                            "'headlight assembly', 'brake rotor', 'door handle'. "
+                            "If unsure, say 'auto part'. Return ONLY the words."
+                        )
+                    },
+                    {"role": "user", "content": query_base}
+                ]
+            },
+            timeout=10
+        )
+        if r_trad.status_code == 200:
+            query_taxonomy = r_trad.json()['choices'][0]['message']['content'].strip().strip('"')
         else:
-            r_tree = requests.get(
-                f"https://api.ebay.com/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id={marketplace_id}",
-                headers=headers_tax, timeout=10
-            )
-            if r_tree.status_code != 200:
-                st.error(f"❌ TAXONOMY Tree error {r_tree.status_code}: {r_tree.text[:200]}")
-                return ""
-            tree_id = str(r_tree.json().get("categoryTreeId", ""))
-            st.info(f"✅ TAXONOMY: Tree ID = {tree_id}")
-        # Construir texto base desde Amazon (más descriptivo que el título de eBay)
-        texto_amazon = ""
-        if bullets:
-            texto_amazon = bullets[0][:120]
-        elif descripcion:
-            texto_amazon = descripcion[:120]
-        texto_para_traducir = texto_amazon if texto_amazon else titulo
-        # Traducir a inglés con Groq
-        try:
-            api_key = st.secrets["groq"]["api_key"]
-            r_trad = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "openai/gpt-oss-120b",
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an eBay category expert. Given a product title or description, "
-                                "extract a SHORT and SPECIFIC product search query in English (3-5 words max) "
-                                "that identifies exactly WHAT the physical product IS.\n\n"
-                                "RULES:\n"
-                                "1. Focus on the PHYSICAL OBJECT, not compatibility or OEM numbers.\n"
-                                "2. Include the product type AND material/mechanism if relevant.\n"
-                                "3. NEVER output generic terms like 'OEM part', 'replacement part', 'accessory'.\n"
-                                "4. NEVER include brand names, car models, or year ranges.\n\n"
-                                "EXAMPLES:\n"
-                                "- 'Espejo lateral pasajero Chevy Express 2008' → 'passenger side mirror assembly'\n"
-                                "- 'Faro delantero Toyota Camry 2019 LED' → 'headlight assembly'\n"
-                                "- 'Manija puerta delantera Ford F150' → 'exterior door handle'\n"
-                                "- 'Audífonos Bluetooth Sony cancelación ruido' → 'bluetooth noise cancelling headphones'\n"
-                                "- 'Silla gaming ergonómica reclinable' → 'ergonomic gaming chair'\n"
-                                "- 'Cargador inalámbrico 15W USB-C' → 'wireless phone charger'\n\n"
-                                "Return ONLY the short query. No explanations, no punctuation."
-                            )
-                        },
-                        {"role": "user", "content": texto_para_traducir}
-                    ]
-                },
-                timeout=10
-            )
-            if r_trad.status_code == 200:
-                query_taxonomy = r_trad.json()['choices'][0]['message']['content'].strip().strip('"')
-                st.info(f"🌐 Query Taxonomy (IA): '{query_taxonomy}'")
-            else:
-                query_taxonomy = " ".join(titulo.split()[:5])
-        except Exception:
-            query_taxonomy = " ".join(titulo.split()[:5])
-        titulo_corto = query_taxonomy[:100]
-        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo_corto)}"
-        resp_sug = requests.get(url_sug, headers=headers_tax, timeout=10)
-        if resp_sug.status_code != 200:
-            st.warning(f"❌ DIAGNÓSTICO Suggestions: status={resp_sug.status_code} body={resp_sug.text[:200]}")
+            query_taxonomy = " ".join(titulo.split()[:4])
+    except Exception:
+        query_taxonomy = " ".join(titulo.split()[:4])
+
+    # Si Groq devuelve algo genérico, usar fallback directo
+    QUERIES_INVALIDAS = {
+        "", "part", "component", "replacement", "oem", "accessory",
+        "unspecified part", "automotive oem component", "oem replacement part",
+        "auto part", "car part", "replacement part", "oem part"
+    }
+    if query_taxonomy.lower() in QUERIES_INVALIDAS or len(query_taxonomy) < 4:
+        st.warning(f"⚠️ Query Groq inválida ('{query_taxonomy}'). Saltando Taxonomy API.")
+        return ""
+
+    st.info(f"🌐 Query Taxonomy: '{query_taxonomy}'")
+
+    # Obtener App Token
+    try:
+        app_id  = st.secrets["ebay"]["app_id"]
+        cert_id = st.secrets["ebay"]["cert_id"]
+        credencial = base64.b64encode(f"{app_id}:{cert_id}".encode()).decode()
+        r_token = requests.post(
+            "https://api.ebay.com/identity/v1/oauth2/token",
+            headers={"Authorization": f"Basic {credencial}", "Content-Type": "application/x-www-form-urlencoded"},
+            data="grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope",
+            timeout=15
+        )
+        if r_token.status_code != 200:
             return ""
-        sugerencias = resp_sug.json().get("categorySuggestions", [])
-        if not sugerencias:
-            st.warning(f"❌ DIAGNÓSTICO: Taxonomy respondió 200 pero lista vacía. URL usada: {url_sug[:150]}")
+        app_token = r_token.json().get("access_token", "")
+    except Exception:
+        return ""
+
+    headers_tax = {"Authorization": f"Bearer {app_token}", "Accept": "application/json"}
+
+    # Detectar si es autoparte para usar tree 100
+    KEYWORDS_MOTORS = ["mirror","espejo","retrovisor","bumper","fender","headlight",
+                       "taillight","faro","parachoque","brake","freno","rotor","strut",
+                       "shock","alternator","radiator","chevy","ford","toyota","honda",
+                       "gmc","dodge","chevrolet","passenger side","driver side"]
+    texto_check = (titulo + " " + " ".join(bullets[:2])).lower()
+    es_autoparte = any(kw in texto_check for kw in KEYWORDS_MOTORS)
+    tree_id = "100" if es_autoparte else "0"
+
+    try:
+        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(query_taxonomy)}"
+        r_sug = requests.get(url_sug, headers=headers_tax, timeout=10)
+        if r_sug.status_code != 200:
             return ""
+
         CATEGORIAS_INVALIDAS = {
-            "12", "20081", "550", "625", "30090", "30097", "1", "64482",
-            "15724", "11450", "2984", "6000", "4", "353", "11233",
-            "15709", "99697", "260308", "20710"
+            "12","20081","550","625","30090","30097","1","64482","15724",
+            "11450","2984","6000","4","353","11233","15709","99697",
+            "260308","20710","50445","14936","3270","175716"
         }
-        for s in sugerencias:
+
+        for s in r_sug.json().get("categorySuggestions", []):
             cat = s.get("category", {})
             cat_id = str(cat.get("categoryId", ""))
             cat_nombre = cat.get("categoryName", "")
-            if not cat_id:
+            if not cat_id or cat_id in excluir or cat_id in CATEGORIAS_INVALIDAS:
                 continue
-            if cat_id in excluir:
-                continue
-            if cat_id in CATEGORIAS_INVALIDAS:
-                st.warning(f"⚠️ Taxonomy sugirió categoría inválida `{cat_id}` ({cat_nombre}). Ignorando...")
-                continue
-            st.success(f"✅ TAXONOMY encontró: `{cat_id}` ({cat_nombre})")
+            st.success(f"✅ TAXONOMY: `{cat_id}` ({cat_nombre})")
             return cat_id
-        st.error("❌ TAXONOMY: Todas las sugerencias fueron inválidas o excluidas.")
-        return ""
     except Exception as e:
-        st.warning(f"❌ DIAGNÓSTICO TAXONOMY DIRECTA | Excepción: {e}")
+        st.error(f"❌ Taxonomy excepción: {e}")
+
     return ""
 
 def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "", bullets: list = [], excluir_categorias: set = set()) -> str:
