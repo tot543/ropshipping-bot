@@ -182,7 +182,7 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         return texto
 
     # Usar el título de eBay en español directamente (eBay lo soporta)
-    query_taxonomy = limpiar_query(titulo)[:100]
+    query_taxonomy = limpiar_query(titulo)
     st.info(f"🔍 Taxonomy query: '{query_taxonomy[:80]}'")
 
     # Obtener App Token
