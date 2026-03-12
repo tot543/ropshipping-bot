@@ -11,9 +11,9 @@ import os
 import uuid
 import json
 import streamlit as st
-import requests
 import re
 from datetime import datetime, timezone
+from urllib.parse import quote
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.ebay_auth import get_valid_token, refresh_access_token
 st.set_page_config(page_title="Publicador Automático | eBay Hub", page_icon="🚀", layout="wide")
@@ -85,7 +85,7 @@ def obtener_sugerencias_ebay_taxonomy(titulo: str, tienda_id: str, marketplace_i
         if not tree_id:
             return ""
         # 2. Obtener sugerencias basadas en el título
-        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_suggestion?q={titulo}"
+        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
         resp_sug = hacer_peticion_con_reintento("GET", url_sug, tienda_id)
         
         if resp_sug.status_code == 200:
@@ -111,7 +111,7 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         tree_id = resp_tree.json().get("categoryTreeId", "")
         if not tree_id:
             return ""
-        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_suggestion?q={titulo}"
+        url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(titulo)}"
         resp_sug = hacer_peticion_con_reintento("GET", url_sug, tienda_id)
         if resp_sug.status_code != 200:
             return ""
