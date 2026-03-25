@@ -7,13 +7,10 @@ import uuid
 import json
 from datetime import datetime, timezone
 from urllib.parse import quote
-
 # El root ya debe estar en el path por app.py, pero por seguridad:
 if os.getcwd() not in sys.path:
     sys.path.insert(0, os.getcwd())
-
 from utils.ebay_auth import get_valid_token, refresh_access_token, get_app_token
-
 st.set_page_config(page_title="Publicador Automático | eBay Hub", page_icon="🚀", layout="wide")
 EBAY_INVENTORY_BASE_URL  = "https://api.ebay.com/sell/inventory/v1"
 EBAY_ACCOUNT_BASE_URL    = "https://api.ebay.com/sell/account/v1"
@@ -103,16 +100,13 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
     from urllib.parse import quote
     import base64
     import re as _re
-
     def limpiar_query(texto: str) -> str:
         texto = _re.sub(r'[^\x00-\x7F\u00C0-\u024F\u00C0-\u017E]', ' ', texto)
         texto = _re.sub(r'[【】〔〕「」『』（）［］｛｝]', ' ', texto)
         texto = _re.sub(r'\s+', ' ', texto).strip()
         return texto
-
     query_taxonomy = limpiar_query(titulo)
     st.info(f"🔍 Taxonomy query: '{query_taxonomy[:80]}'")
-
     try:
         app_id  = st.secrets["ebay"]["app_id"]
         cert_id = st.secrets["ebay"]["cert_id"]
@@ -128,16 +122,13 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
         app_token = r_token.json().get("access_token", "")
     except Exception:
         return ""
-
     headers_tax = {"Authorization": f"Bearer {app_token}", "Accept": "application/json"}
     tree_id = forzar_tree_id if forzar_tree_id else "0"
-
     try:
         url_sug = f"https://api.ebay.com/commerce/taxonomy/v1/category_tree/{tree_id}/get_category_suggestions?q={quote(query_taxonomy)}"
         r_sug = requests.get(url_sug, headers=headers_tax, timeout=10)
         if r_sug.status_code != 200:
             return ""
-
         for s in r_sug.json().get("categorySuggestions", []):
             cat_id = str(s.get("category", {}).get("categoryId", ""))
             if cat_id and cat_id not in excluir:
@@ -145,9 +136,7 @@ def obtener_categoria_hoja_taxonomy(titulo: str, tienda_id: str, marketplace_id:
                 return cat_id
     except Exception as e:
         st.error(f"❌ Taxonomy excepción: {e}")
-
     return ""
-
 def interpretar_error_categoria_ia(titulo: str = "", marketplace_id: str = "EBAY_US", sugerencias_ebay: str = "", extra_prompt: str = "", bullets: list = [], excluir_categorias: set = set()) -> str:
     """
     Usa Groq para sugerir un Category ID numérico de eBay basado en el título, marketplace 
@@ -374,17 +363,14 @@ def construir_payload_inventory_item(producto: dict, descripcion_html: str, aspe
             "imageUrls": imagenes,
         },
     }
-
 CATEGORIAS_EBAY_MOTORS = {
     "262161","262160","262241","262244","262200","33559","33563",
     "33640","33642","33643","33649","38635","33596","42612","33590",
     "33558","42435","40564","33606","33637","33566","33638","33639",
     "9886","50445","6030","179637","179638","10063"
 }
-
 def es_categoria_motors(category_id: str) -> bool:
     return str(category_id) in CATEGORIAS_EBAY_MOTORS
-
 def construir_payload_oferta(
     producto: dict, 
     sku: str, 
@@ -508,7 +494,6 @@ def categoria_pertenece_a_motors(category_id: str, token: str) -> bool:
         return resp.status_code == 200
     except:
         return False
-
 # ─────────────────────────────────────────────────────────
 # FUNCIÓN PRINCIPAL DE PUBLICACIÓN
 # ─────────────────────────────────────────────────────────
@@ -532,12 +517,9 @@ def publicar_en_ebay(
     # Corrección preventiva de categoría ANTES de publicar
     titulo_prev = producto.get("titulo", "")
     bullets_prev = producto.get("bullets_amazon", [])
-
     st.info(f"📋 Título eBay: '{titulo_prev}'")
     st.info(f"📋 Categoría original: '{producto['category_id']}'")
-
     es_motors = st.session_state.get("es_motors", False)
-
     if es_motors:
         marketplace_id = "EBAY_MOTORS"
         cat_original = str(producto.get("category_id", ""))
@@ -559,15 +541,15 @@ def publicar_en_ebay(
     else:
         marketplace_id = "EBAY_US"
         st.info(f"🛒 Marketplace: {marketplace_id}")
-
-
+    descripcion_html_generada = ""
+    aspectos_dict = {}
     while intento_global < max_reintentos_globales:
         sku = f"DS-{str(uuid.uuid4())[:8].upper()}"
         try:
             from skills.groq_agent import GroqAssistant
             agente_groq = GroqAssistant()
             
-            if intento_global == 0:
+            if intento_global == 0 or not descripcion_html_generada:
                 with st.spinner('🧠 Groq redactando descripción y specs...'):
                     titulo = producto['titulo']
                     bullets = producto.get('bullets_amazon', [])
@@ -585,7 +567,6 @@ def publicar_en_ebay(
             req_item = hacer_peticion_con_reintento("PUT", url_item, tienda_id, payload_item, marketplace_id=marketplace_id)
             req_item.raise_for_status()
             st.success(f"✅ Inventory Item creado — SKU: `{sku}`")
-
             # ── Paso B: CreateOffer ──
             url_offer = f"{EBAY_INVENTORY_BASE_URL}/offer"
             marketplace_oferta = "EBAY_MOTORS" if es_categoria_motors(str(producto["category_id"])) else marketplace_id
@@ -618,16 +599,13 @@ def publicar_en_ebay(
                 # Error de categoría o local pickup (no corregir automáticamente)
                 if any(err.get("errorId") in (25005, 25008) for err in errores):
                     return False, f"❌ Error de eBay: {req_offer.json().get('errors', [{}])[0].get('message')}"
-
             req_offer.raise_for_status()
             offer_id = req_offer.json().get("offerId", "")
             st.success(f"✅ Offer creada — Offer ID: `{offer_id}`")
-
             # ── Paso C: PublishOffer ──
             url_publish = f"{EBAY_INVENTORY_BASE_URL}/offer/{offer_id}/publish"
             st.markdown(f"**Paso C** — `POST {url_publish}`")
             req_publish = hacer_peticion_con_reintento("POST", url_publish, tienda_id, {}, marketplace_id=marketplace_id)
-
             if req_publish.status_code == 400:
                 errores = req_publish.json().get("errors", [])
                 if any(err.get("errorId") == 25006 for err in errores):
@@ -643,14 +621,12 @@ def publicar_en_ebay(
                         continue
                 if any(err.get("errorId") in (25005, 25008, 25604) for err in errores):
                     return False, f"❌ Error de eBay (Publish): {req_publish.json().get('errors', [{}])[0].get('message')}"
-
             if req_publish.status_code == 500:
                 st.warning("⚠️ Error interno de eBay (500). Reintentando en 3s...")
                 import time
                 time.sleep(3)
                 intento_global += 1
                 continue
-
             req_publish.raise_for_status()
             listing_id = req_publish.json().get("listingId", "N/A")
             
@@ -663,9 +639,7 @@ def publicar_en_ebay(
                     if agregar_ad_a_campana(tienda_id, campaign_id, listing_id, ad_rate_pct):
                         st.success(f"📢 Producto promocionado: {ad_rate_pct}%")
                         mensaje_exito += f"\n\n📢 **Promoted Listings Activo**"
-
             return (True, mensaje_exito)
-
         except requests.exceptions.HTTPError as e:
             if intento_global >= max_reintentos_globales - 1:
                 return False, f"❌ Error HTTP {e.response.status_code}:\n{e.response.text}"
