@@ -1,7 +1,6 @@
 import requests
 import json
 import streamlit as st
-
 class GroqAssistant:
     """
     Agente experto en IA usando la API compatible con OpenAI de Groq.
@@ -10,15 +9,19 @@ class GroqAssistant:
     
     def __init__(self):
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
-
     def _llamar_groq(self, prompt_sistema: str, prompt_usuario: str) -> str:
         """
         Realiza la petición HTTP directa a la API de Groq.
         """
         try:
-            api_key = st.secrets["groq"]["api_key"]
+            # Intentamos obtener la llave de la tienda activa primero
+            if "config_tienda" in st.session_state and "api_key_groq" in st.session_state["config_tienda"]:
+                api_key = st.session_state["config_tienda"]["api_key_groq"]
+            else:
+                # Si no hay llave por tienda, usamos la global
+                api_key = st.secrets["groq"]["api_key"]
         except KeyError:
-            raise ValueError("Falta configurar [groq] api_key en secrets.toml")
+            raise ValueError("Falta configurar la [groq] api_key (global o por tienda) en secrets.toml")
             
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -44,7 +47,6 @@ class GroqAssistant:
             if hasattr(e, 'response') and e.response is not None:
                 err_msg += f" - Respuesta: {e.response.text}"
             raise RuntimeError(err_msg)
-
     def generar_descripcion(self, titulo: str, bullets: list) -> str:
         """
         Genera una descripción HTML limpia y persuasiva en español,
@@ -59,7 +61,6 @@ class GroqAssistant:
         user_prompt += "\n".join([f"- {b}" for b in bullets])
         
         return self._llamar_groq(sys_prompt, user_prompt)
-
     def generar_aspectos(self, titulo: str, bullets: list) -> str:
         """
         Extrae los aspectos clave en un JSON validado, combinando specs default obligatorias.
@@ -85,7 +86,6 @@ class GroqAssistant:
         user_prompt += "\n".join([f"- {b}" for b in bullets])
         
         return self._llamar_groq(sys_prompt, user_prompt)
-
     def interpretar_error_aspectos(self, error_json: str) -> list:
         """
         Analiza el JSON de error de eBay y extrae los nombres de los aspectos faltantes.
